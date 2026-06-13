@@ -1,0 +1,36 @@
+# Model weights (too large for git)
+output/
+models/
+*.safetensors
+*.bin
+*.pt
+*.pth
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+wandb/
+runs/
+
+# Env
+.env
+.venv/
+venv/

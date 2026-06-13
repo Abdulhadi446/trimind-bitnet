@@ -1,0 +1,13 @@
+torch>=2.1.0
+transformers>=4.38.0
+accelerate>=0.27.0
+bitsandbytes>=0.43.0
+safetensors>=0.4.0
+psutil>=5.9.0
+pillow>=10.0.0
+
+# For TPU support (optional):
+# torch-xla @ https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-2.1.0-cp310-cp310-linux_x86_64.whl
+
+# For vision testing (optional if not using image inputs):
+# torchvision
