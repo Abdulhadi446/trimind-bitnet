@@ -39,9 +39,9 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
     if cached:
         logger.info("Model cache found at: %s", cached)
     else:
-        logger.info("No local cache — will download from Hugging Face Hub (~17.5 GB)")
+        logger.info("No local cache — will download from Hugging Face Hub (~16 GB)")
 
-    device, dtype = hardware_utils.detect_device()
+    device, dtype = hardware_utils.detect_device(model_size_gb=16)
     if device_override:
         device = torch.device(device_override)
     if dtype_override:
@@ -85,12 +85,16 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
         )
         raise
 
-    if device.type != "cuda":
+    if device.type == "cuda":
         model = model.to(device)
+    elif device.type != "cpu":
+        logger.warning("Unsupported device %s — keeping model on CPU.", device)
+
+    actual_device = model.device if hasattr(model, "device") else device
 
     hardware_utils.log_memory("after_load", device)
 
     processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
 
     logger.info("Model loaded on %s with dtype %s.", device, dtype)
-    return model, processor, device
+    return model, processor, actual_device

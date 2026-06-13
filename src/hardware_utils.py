@@ -5,14 +5,26 @@ import torch
 logger = logging.getLogger(__name__)
 
 
-def detect_device():
-    """Auto-detect best available hardware and return (device, dtype)."""
+def detect_device(model_size_gb: float | None = None):
+    """Auto-detect best available hardware and return (device, dtype).
+
+    Args:
+        model_size_gb: Estimated model size in GB (used for TPU memory check).
+    """
     # Check for TPU (torch-xla)
     try:
         import torch_xla
         import torch_xla.core.xla_model as xm
 
         device = xm.xla_device()
+        # TPU v2 has 8 GB HBM per core, v3 has 16 GB, v5e has 8-16 GB
+        if model_size_gb and model_size_gb > 4:
+            logger.warning(
+                "TPU detected but model is ~%.1f GB — may not fit in TPU HBM. "
+                "Falling back to CPU. Use --dtype 4bit or a GPU runtime.",
+                model_size_gb,
+            )
+            raise RuntimeError("Model too large for TPU")
         logger.info("TPU detected via torch-xla. Using device: %s", device)
         return device, torch.bfloat16
     except (ImportError, RuntimeError, AttributeError):
