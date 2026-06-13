@@ -12,14 +12,17 @@ Compress the [Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) mult
 4. **Inference test** — Runs text prompts, multi-turn Q&A, and optional vision inference through the quantized model.
 5. **Save** — Optionally persists the quantized weights.
 
-## Setup
-
-### Local (GPU)
+## Quick Start
 
 ```bash
-pip install -r requirements.txt
-python src/run_pipeline.py
+# One-command setup + chat interface
+./start.sh
+
+# Or with custom max tokens
+./start.sh --max-tokens 1024
 ```
+
+## Setup
 
 ### Google Colab — GPU (T4, A100, etc.)
 
@@ -69,12 +72,16 @@ python src/run_pipeline.py --device cpu
 ├── README.md
 ├── requirements.txt
 ├── .gitignore
+├── start.sh               — One-click venv setup + chat launch
+├── requirements.txt
+├── .gitignore
 └── src/
     ├── hardware_utils.py   — Device/dtype auto-detection + memory logging
     ├── load_model.py       — Load Qwen3.6-35B-A3B with auto-config
     ├── quantize.py         — Generic TernaryLinear for any nn.Linear layer
     ├── test_inference.py   — Text, multi-turn, and vision test prompts
-    └── run_pipeline.py     — Main entry point: load → quantize → test → save
+    ├── run_pipeline.py     — Main entry point: load → quantize → test → save
+    └── chat_interface.py   — Interactive CLI chat interface
 ```
 
 ## Known Limitations
