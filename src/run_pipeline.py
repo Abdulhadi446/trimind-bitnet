@@ -93,8 +93,19 @@ def main():
     logger.info("Quantized %d Linear layers in-place.", n_replaced)
     log_memory("after_quantize", device)
 
-    # Step 3: Test
-    logger.info("Step 3/4: Running test inference...")
+    # Step 3: Save (before inference — save even if inference crashes)
+    if args.save:
+        logger.info("Step 3/4: Saving quantized model...")
+        save_dir = os.path.join(args.output_dir, MODEL_SAVE_NAME)
+        os.makedirs(save_dir, exist_ok=True)
+        model.save_pretrained(save_dir, safe_serialization=True)
+        processor.save_pretrained(save_dir)
+        logger.info("Quantized model saved to: %s", save_dir)
+    else:
+        logger.info("Step 3/4: Skipped (use --save to persist).")
+
+    # Step 4: Test (may fail on quantized model — that's expected)
+    logger.info("Step 4/4: Running test inference...")
     run_text_inference(model, processor, device)
     run_multi_turn_inference(model, processor, device)
 
@@ -102,17 +113,6 @@ def main():
         run_vision_inference(model, processor, device, image_path=args.image)
     else:
         logger.info("Skipping vision test (no --image provided).")
-
-    # Step 4: Save (optional)
-    if args.save:
-        logger.info("Step 4/4: Saving quantized model...")
-        save_dir = os.path.join(args.output_dir, MODEL_SAVE_NAME)
-        os.makedirs(save_dir, exist_ok=True)
-        model.save_pretrained(save_dir, safe_serialization=True)
-        processor.save_pretrained(save_dir)
-        logger.info("Quantized model saved to: %s", save_dir)
-    else:
-        logger.info("Step 4/4: Skipped (use --save to persist).")
 
     logger.info("Pipeline complete.")
 
