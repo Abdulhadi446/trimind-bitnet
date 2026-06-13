@@ -56,17 +56,15 @@ def detect_device(model_size_gb: float | None = None):
         logger.warning("No GPU detected. Falling back to CPU — this will be very slow.")
         total_ram = psutil.virtual_memory().total / (1024**3)
         logger.info("System RAM: %.1f GB", total_ram)
-        if total_ram >= 64:
-            logger.info("Sufficient RAM. Using 8-bit on CPU.")
-            return torch.device("cpu"), "8bit"
-        elif total_ram >= 32:
-            logger.info("RAM limited (%.1f GB). Using 4-bit on CPU.", total_ram)
-            return torch.device("cpu"), "4bit"
+        if total_ram >= 32:
+            logger.info("Sufficient RAM for BF16.")
+            return torch.device("cpu"), torch.bfloat16
         else:
             logger.warning(
-                "Low RAM (%.1f GB). Attempting 4-bit — may OOM.", total_ram
+                "Low RAM (%.0f GB). Model may not fit. Use a GPU runtime.",
+                total_ram,
             )
-            return torch.device("cpu"), "4bit"
+            return torch.device("cpu"), torch.float32
 
 
 def log_memory(step_label: str, device: torch.device):
