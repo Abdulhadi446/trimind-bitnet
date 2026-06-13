@@ -6,20 +6,11 @@ logger = logging.getLogger(__name__)
 
 
 def ternary_weights(weight: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
-    """Quantize a weight tensor to ternary {-1, 0, +1} using absmean scaling.
-
-    Args:
-        weight: Full-precision weight tensor.
-        scale: Scaling factor (typically group/global absmean).
-
-    Returns:
-        Ternary weight tensor of same shape with values in {-scale, 0, +scale}.
-    """
     threshold = 0.7 * scale
     return torch.where(
         weight > threshold,
         scale,
-        torch.where(weight < -threshold, -scale, torch.tensor(0.0, device=weight.device)),
+        torch.where(weight < -threshold, -scale, torch.tensor(0.0, device=weight.device, dtype=weight.dtype)),
     )
 
 
@@ -42,7 +33,7 @@ class TernaryLinear(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         w_ternary = ternary_weights(self.weight.data, scale=self.weight.abs().mean())
-        return nn.functional.linear(x, w_ternary, self.bias)
+        return nn.functional.linear(x, w_ternary.to(x.dtype), self.bias)
 
 
 def replace_linear_with_ternary(model: nn.Module, exclude_names: set | None = None):
