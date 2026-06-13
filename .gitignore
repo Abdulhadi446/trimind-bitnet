@@ -35,6 +35,11 @@ data/
 md/
 openaiformat/
 
+# Unrelated workspace scripts
+app.py
+convert.py
+rebrand.py
+
 # Env
 .env
 .venv/
