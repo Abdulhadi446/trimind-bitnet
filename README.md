@@ -1,13 +1,13 @@
 # triMind-BitNet
 
-**Qwen3.6-35B-A3B → 1.58-bit Ternary Quantization Pipeline**
+**Qwen3-VL-8B → 1.58-bit Ternary Quantization Pipeline**
 
-Compress the [Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) multimodal MoE model to BitNet-style ternary weights (`{-1, 0, +1}`) using post-training quantization (PTQ). This reduces each parameter from 16 bits to ~1.58 bits, drastically cutting memory while preserving most of the model's capabilities.
+Compress the [Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct) multimodal model to BitNet-style ternary weights (`{-1, 0, +1}`) using post-training quantization (PTQ). This reduces each parameter from 16 bits to ~1.58 bits, drastically cutting memory while preserving most of the model's capabilities.
 
 ## How It Works
 
 1. **Hardware auto-detection** — Detects TPU (torch-xla), CUDA GPU, or CPU and selects optimal precision (BF16, 8-bit, or 4-bit).
-2. **Model loading** — Loads Qwen3.6-35B-A3B with the chosen precision.
+2. **Model loading** — Loads Qwen3-VL-8B-Instruct with the chosen precision.
 3. **Ternary quantization** — Replaces all `nn.Linear` layers with `TernaryLinear`: weights are clamped to `{-α, 0, +α}` via absmean scaling. This is a *generic* transformation that works on any Hugging Face model (Qwen, Gemma, Llama, etc.).
 4. **Inference test** — Runs text prompts, multi-turn Q&A, and optional vision inference through the quantized model.
 5. **Save** — Optionally persists the quantized weights.
@@ -77,7 +77,7 @@ python src/run_pipeline.py --device cpu
 ├── .gitignore
 └── src/
     ├── hardware_utils.py   — Device/dtype auto-detection + memory logging
-    ├── load_model.py       — Load Qwen3.6-35B-A3B with auto-config
+    ├── load_model.py       — Load Qwen3-VL-8B-Instruct with auto-config
     ├── quantize.py         — Generic TernaryLinear for any nn.Linear layer
     ├── test_inference.py   — Text, multi-turn, and vision test prompts
     ├── run_pipeline.py     — Main entry point: load → quantize → test → save
@@ -87,16 +87,15 @@ python src/run_pipeline.py --device cpu
 ## Known Limitations
 
 - **PTQ vs. QAT** — This is post-training quantization (PTQ), not quantization-aware training (QAT). BitNet papers achieve best results with training from scratch or QAT fine-tuning. Expect some quality degradation, especially on complex reasoning.
-- **MoE architecture** — Qwen3.6-35B-A3B is a mixture-of-experts model. Ternary quantization of expert gates and feed-forward layers may affect routing quality.
-- **No backward pass** — `TernaryLinear` supports forward inference only. For QAT, extend the class with a custom autograd `Function` that uses a straight-through estimator.
 - **Vision encoder** — The vision encoder's Linear layers are also quantized; for best results, consider excluding the vision tower with a custom `exclude_names` set.
+- **No backward pass** — `TernaryLinear` supports forward inference only. For QAT, extend the class with a custom autograd `Function` that uses a straight-through estimator.
 
 ## License & Attribution
 
 This project is licensed under **Apache 2.0**.
 
-The base model [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) is also Apache 2.0. Full attribution:
-- **Qwen Team** — *Qwen3.6-35B-A3B* (2026). https://huggingface.co/Qwen/Qwen3.6-35B-A3B
+The base model [Qwen/Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct) is also Apache 2.0. Full attribution:
+- **Qwen Team** — *Qwen3-VL-8B-Instruct* (2026). https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct
 
 BitNet 1.58-bit quantization concept from:
 - Wang et al., *BitNet: Scaling 1-bit Transformers for Large Language Models* (2023)

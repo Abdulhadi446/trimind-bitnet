@@ -19,7 +19,7 @@ logging.getLogger("src").setLevel(logging.WARNING)
 WELCOME = """
 ╔══════════════════════════════════════════════╗
 ║         triMind-BitNet Chat Interface        ║
-║         Model: Qwen3.6-35B-A3B               ║
+║         Model: Qwen3-VL-8B-Instruct          ║
 ║         Type /help for commands              ║
 ╚══════════════════════════════════════════════╝
 """

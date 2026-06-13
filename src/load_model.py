@@ -6,11 +6,11 @@ from . import hardware_utils
 
 logger = logging.getLogger(__name__)
 
-MODEL_ID = "Qwen/Qwen3.6-35B-A3B"
+MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 
 
 def load_model(device_override: str | None = None, dtype_override: str | None = None):
-    """Load Qwen3.6-35B-A3B with automatic hardware-aware configuration.
+    """Load model with automatic hardware-aware configuration.
 
     Args:
         device_override: Force a device string (e.g. 'cuda:0', 'cpu').

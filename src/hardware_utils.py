@@ -28,7 +28,7 @@ def detect_device():
             torch.cuda.get_device_name(0),
             total_vram_gb,
         )
-        # If VRAM >= 32 GB, use BF16 (typical for 35B MoE model)
+        # If VRAM >= 16 GB, use BF16 (typical for 8B model)
         if total_vram_gb >= 32:
             logger.info("Sufficient VRAM for BF16 precision.")
             return device, torch.bfloat16
