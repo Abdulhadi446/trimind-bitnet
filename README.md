@@ -1,13 +1,13 @@
 # triMind-BitNet
 
-**Qwen3-VL-8B → 1.58-bit Ternary Quantization Pipeline**
+**Gemma4-12B → 1.58-bit Ternary Quantization Pipeline**
 
-Compress the [Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct) multimodal model to BitNet-style ternary weights (`{-1, 0, +1}`) using post-training quantization (PTQ). This reduces each parameter from 16 bits to ~1.58 bits, drastically cutting memory while preserving most of the model's capabilities.
+Compress the [google/gemma-4-12B-it](https://huggingface.co/google/gemma-4-12B-it) multimodal model to BitNet-style ternary weights (`{-1, 0, +1}`) using post-training quantization (PTQ). This reduces each parameter from 16 bits to ~1.58 bits, drastically cutting memory while preserving most of the model's capabilities.
 
 ## How It Works
 
 1. **Hardware auto-detection** — Detects TPU (torch-xla), CUDA GPU, or CPU and selects optimal precision (BF16, 8-bit, or 4-bit).
-2. **Model loading** — Loads Qwen3-VL-8B-Instruct with the chosen precision.
+2. **Model loading** — Loads Gemma4-12B-it with the chosen precision.
 3. **Ternary quantization** — Replaces all `nn.Linear` layers with `TernaryLinear`: weights are clamped to `{-α, 0, +α}` via absmean scaling. This is a *generic* transformation that works on any Hugging Face model (Qwen, Gemma, Llama, etc.).
 4. **Inference test** — Runs text prompts, multi-turn Q&A, and optional vision inference through the quantized model.
 5. **Save** — Optionally persists the quantized weights.
@@ -84,7 +84,7 @@ python src/run_pipeline.py --device cpu
 ├── .gitignore
 └── src/
     ├── hardware_utils.py   — Device/dtype auto-detection + memory logging
-    ├── load_model.py       — Load Qwen3-VL-8B-Instruct with auto-config
+    ├── load_model.py       — Load Gemma4-12B-it with auto-config
     ├── quantize.py         — Generic TernaryLinear for any nn.Linear layer
     ├── test_inference.py   — Text, multi-turn, and vision test prompts
     ├── run_pipeline.py     — Main entry point: load → quantize → test → save
@@ -101,8 +101,8 @@ python src/run_pipeline.py --device cpu
 
 This project is licensed under **Apache 2.0**.
 
-The base model [Qwen/Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct) is also Apache 2.0. Full attribution:
-- **Qwen Team** — *Qwen3-VL-8B-Instruct* (2026). https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct
+The base model [google/gemma-4-12B-it](https://huggingface.co/google/gemma-4-12B-it) comes under the [Gemma license](https://ai.google.dev/gemma/terms). Full attribution:
+- **Google** — *Gemma 4* (2026). https://huggingface.co/google/gemma-4-12B-it
 
 BitNet 1.58-bit quantization concept from:
 - Wang et al., *BitNet: Scaling 1-bit Transformers for Large Language Models* (2023)

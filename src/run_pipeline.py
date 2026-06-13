@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-triMind-BitNet: Qwen3-VL-8B → 1.58-bit Ternary Quantization Pipeline.
+triMind-BitNet: Gemma4-12B → 1.58-bit Ternary Quantization Pipeline.
 
 Usage:
     python src/run_pipeline.py                          # full pipeline
@@ -34,7 +34,7 @@ logging.basicConfig(
 logger = logging.getLogger("pipeline")
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "output")
-MODEL_SAVE_NAME = "qwen3-vl-8b-ternary"
+MODEL_SAVE_NAME = "gemma4-12b-ternary"
 
 
 def parse_args():
@@ -70,7 +70,7 @@ def main():
 
     logger.info("=" * 50)
     logger.info("triMind-BitNet Pipeline")
-    logger.info("Model: Qwen/Qwen3-VL-8B-Instruct → 1.58-bit Ternary")
+    logger.info("Model: google/gemma-4-12B-it → 1.58-bit Ternary")
     logger.info("=" * 50)
 
     # Step 1: Load
