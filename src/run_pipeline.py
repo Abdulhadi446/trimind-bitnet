@@ -62,6 +62,12 @@ def parse_args():
         action="store_true",
         help="Save the quantized model to disk.",
     )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=OUTPUT_DIR,
+        help="Directory to save the quantized model (default: ./output).",
+    )
     return parser.parse_args()
 
 
@@ -100,11 +106,11 @@ def main():
     # Step 4: Save (optional)
     if args.save:
         logger.info("Step 4/4: Saving quantized model...")
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        save_path = os.path.join(OUTPUT_DIR, MODEL_SAVE_NAME)
-        model.save_pretrained(save_path, safe_serialization=True)
-        processor.save_pretrained(save_path)
-        logger.info("Quantized model saved to: %s", save_path)
+        save_dir = os.path.join(args.output_dir, MODEL_SAVE_NAME)
+        os.makedirs(save_dir, exist_ok=True)
+        model.save_pretrained(save_dir, safe_serialization=True)
+        processor.save_pretrained(save_dir)
+        logger.info("Quantized model saved to: %s", save_dir)
     else:
         logger.info("Step 4/4: Skipped (use --save to persist).")
 
