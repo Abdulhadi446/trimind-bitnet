@@ -1,23 +1,35 @@
 import logging
+import os
 import psutil
 import torch
 
 logger = logging.getLogger(__name__)
 
 
+def _bitsandbytes_available() -> bool:
+    try:
+        import bitsandbytes
+        from packaging import version
+
+        return version.parse(bitsandbytes.__version__) >= version.parse("0.46.1")
+    except (ImportError, AttributeError, Exception):
+        return False
+
+
 def detect_device(model_size_gb: float | None = None):
     """Auto-detect best available hardware and return (device, dtype).
 
     Args:
-        model_size_gb: Estimated model size in GB (used for TPU memory check).
+        model_size_gb: Estimated model size in GB (used for VRAM/RAM decisions).
     """
+    est = model_size_gb or 16  # default estimate
+
     # Check for TPU (torch-xla)
     try:
         import torch_xla
         import torch_xla.core.xla_model as xm
 
         device = xm.xla_device()
-        # TPU v2 has 8 GB HBM per core, v3 has 16 GB, v5e has 8-16 GB
         if model_size_gb and model_size_gb > 4:
             logger.warning(
                 "TPU detected but model is ~%.1f GB — may not fit in TPU HBM. "
@@ -40,18 +52,24 @@ def detect_device(model_size_gb: float | None = None):
             torch.cuda.get_device_name(0),
             total_vram_gb,
         )
-        # If VRAM >= 16 GB, use BF16 (typical for 8B model)
-        if total_vram_gb >= 32:
+        if total_vram_gb >= est * 1.2:
             logger.info("Sufficient VRAM for BF16 precision.")
             return device, torch.bfloat16
-        elif total_vram_gb >= 16:
-            logger.info("VRAM limited (%.1f GB). Using 8-bit via bitsandbytes.", total_vram_gb)
-            return device, "8bit"
+        elif _bitsandbytes_available():
+            if total_vram_gb >= est * 0.6:
+                logger.info("Using 8-bit bitsandbytes (VRAM: %.1f GB, model ~%.0f GB).", total_vram_gb, est)
+                return device, "8bit"
+            else:
+                logger.info("Using 4-bit bitsandbytes (VRAM: %.1f GB, model ~%.0f GB).", total_vram_gb, est)
+                return device, "4bit"
         else:
             logger.warning(
-                "Low VRAM (%.1f GB). Attempting 4-bit quantization.", total_vram_gb
+                "Low VRAM (%.1f GB) and bitsandbytes not installed. "
+                "Install it with: pip install -U bitsandbytes>=0.46.1",
+                total_vram_gb,
             )
-            return device, "4bit"
+            logger.info("Falling back to BF16 — may OOM on this GPU.")
+            return device, torch.bfloat16
     else:
         logger.warning("No GPU detected. Falling back to CPU — this will be very slow.")
         total_ram = psutil.virtual_memory().total / (1024**3)
