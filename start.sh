@@ -23,26 +23,32 @@ if [ -z "$PYTHON" ]; then
 fi
 echo "[1/3] Using $($PYTHON --version)"
 
-# --- Virtual environment ---
+# --- Virtual environment (skip if venv unavailable, e.g. Colab) ---
 VENV_DIR="$REPO_DIR/.venv"
+USE_VENV=true
 if [ ! -d "$VENV_DIR" ]; then
-    echo "[2/3] Creating virtual environment..."
-    $PYTHON -m venv "$VENV_DIR"
+    echo "[2/3] Attempting virtual environment..."
+    $PYTHON -m venv "$VENV_DIR" 2>/dev/null || { echo "  (venv failed — installing directly)"; USE_VENV=false; }
 else
-    echo "[2/3] Virtual environment exists — skipping creation."
+    echo "[2/3] Virtual environment exists."
 fi
 
-source "$VENV_DIR/bin/activate"
+if [ "$USE_VENV" = true ]; then
+    source "$VENV_DIR/bin/activate"
+    PIP="$VENV_DIR/bin/pip"
+else
+    PIP="pip3"
+fi
 
 # --- Install dependencies ---
 echo "[3/3] Installing dependencies..."
-pip install -q --upgrade pip setuptools wheel 2>/dev/null
-pip install -q -r "$REPO_DIR/requirements.txt" 2>/dev/null
+$PIP install -q --upgrade pip setuptools wheel 2>/dev/null || true
+$PIP install -q -r "$REPO_DIR/requirements.txt" 2>/dev/null || true
 
 # --- Check PyTorch separately (platform-dependent) ---
 if ! $PYTHON -c "import torch" 2>/dev/null; then
-    echo "PyTorch not found. Installing PyTorch (CPU version)..."
-    pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+    echo "PyTorch not found. Installing..."
+    $PIP install -q torch --index-url https://download.pytorch.org/whl/cpu 2>/dev/null || true
 fi
 
 echo ""
