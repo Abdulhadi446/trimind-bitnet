@@ -24,12 +24,19 @@ Compress the [Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Inst
 
 ## Setup
 
+### One-command (auto-installs everything)
+
+```bash
+git clone https://github.com/Abdulhadi446/trimind-bitnet.git && cd trimind-bitnet && ./start.sh
+```
+
 ### Google Colab — GPU (T4, A100, etc.)
 
 ```python
 !git clone https://github.com/Abdulhadi446/trimind-bitnet.git
 %cd trimind-bitnet
-!pip install -r requirements.txt
+!pip install -q -r requirements.txt
+!pip install -q -U bitsandbytes>=0.46.1
 !python src/run_pipeline.py
 ```
 

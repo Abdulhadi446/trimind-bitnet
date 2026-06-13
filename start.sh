@@ -45,6 +45,12 @@ echo "[3/3] Installing dependencies..."
 $PIP install -q --upgrade pip setuptools wheel 2>/dev/null || true
 $PIP install -q -r "$REPO_DIR/requirements.txt" 2>/dev/null || true
 
+# --- Install bitsandbytes on GPU systems ---
+if python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q True; then
+    echo "GPU detected — ensuring bitsandbytes..."
+    $PIP install -q -U bitsandbytes>=0.46.1 2>/dev/null || true
+fi
+
 # --- Check PyTorch separately (platform-dependent) ---
 if ! $PYTHON -c "import torch" 2>/dev/null; then
     echo "PyTorch not found. Installing..."

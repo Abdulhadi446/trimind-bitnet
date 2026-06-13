@@ -16,12 +16,15 @@ except ImportError:
     from transformers import AutoModel as _VLModelClass
 
 
-def _cache_path() -> str | None:
-    """Return the HF cache directory path if it contains model files."""
-    snapshot = try_to_load_from_cache(MODEL_ID, "config.json")
-    if snapshot is not None and not snapshot.startswith("https://"):
-        return os.path.dirname(os.path.dirname(snapshot))
-    return None
+def _cache_complete() -> bool:
+    """Check if actual weight files exist in cache (not just metadata)."""
+    for filename in ("model.safetensors.index.json", "pytorch_model.bin.index.json", "model.safetensors"):
+        result = try_to_load_from_cache(MODEL_ID, filename)
+        if result is not None and not result.startswith("https://"):
+            snapshot_dir = os.path.dirname(result)
+            if os.path.exists(os.path.join(snapshot_dir, filename)):
+                return True
+    return False
 
 
 def load_model(device_override: str | None = None, dtype_override: str | None = None):
@@ -35,11 +38,11 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
         Tuple of (model, processor, device).
     """
     logger.info("Loading model: %s", MODEL_ID)
-    cached = _cache_path()
-    if cached:
-        logger.info("Model cache found at: %s", cached)
+    cache_ok = _cache_complete()
+    if cache_ok:
+        logger.info("Model weights found in HF cache.")
     else:
-        logger.info("No local cache — will download from Hugging Face Hub (~16 GB)")
+        logger.info("No cached weights — will download from Hugging Face Hub (~16 GB)")
 
     device, dtype = hardware_utils.detect_device(model_size_gb=16)
     if device_override:
@@ -75,7 +78,7 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
             quantization_config=quantization_config,
             device_map="auto" if device.type == "cuda" else None,
             trust_remote_code=True,
-            local_files_only=cached is not None,
+            local_files_only=cache_ok,
         )
     except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
         logger.error("Failed to load model: %s", e)
