@@ -1,6 +1,8 @@
 import logging
+import os
 import torch
 from transformers import AutoProcessor, BitsAndBytesConfig
+from huggingface_hub import try_to_load_from_cache
 
 from . import hardware_utils
 
@@ -14,6 +16,14 @@ except ImportError:
     from transformers import AutoModel as _VLModelClass
 
 
+def _cache_path() -> str | None:
+    """Return the HF cache directory path if it contains model files."""
+    snapshot = try_to_load_from_cache(MODEL_ID, "config.json")
+    if snapshot is not None and not snapshot.startswith("https://"):
+        return os.path.dirname(os.path.dirname(snapshot))
+    return None
+
+
 def load_model(device_override: str | None = None, dtype_override: str | None = None):
     """Load model with automatic hardware-aware configuration.
 
@@ -25,6 +35,11 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
         Tuple of (model, processor, device).
     """
     logger.info("Loading model: %s", MODEL_ID)
+    cached = _cache_path()
+    if cached:
+        logger.info("Model cache found at: %s", cached)
+    else:
+        logger.info("No local cache — will download from Hugging Face Hub (~17.5 GB)")
 
     device, dtype = hardware_utils.detect_device()
     if device_override:
@@ -60,6 +75,7 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
             quantization_config=quantization_config,
             device_map="auto" if device.type == "cuda" else None,
             trust_remote_code=True,
+            local_files_only=cached is not None,
         )
     except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
         logger.error("Failed to load model: %s", e)
