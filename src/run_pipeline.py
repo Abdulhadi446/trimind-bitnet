@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 from src.load_model import load_model
-from src.quantize import quantize_inplace
+from src.quantize import quantize_inplace, save_quantized
 from src.test_inference import (
     run_text_inference,
     run_multi_turn_inference,
@@ -95,12 +95,14 @@ def main():
 
     # Step 3: Save (before inference — save even if inference crashes)
     if args.save:
-        logger.info("Step 3/4: Saving quantized model...")
+        logger.info("Step 3/4: Saving quantized model in packed 2-bit format...")
         save_dir = os.path.join(args.output_dir, MODEL_SAVE_NAME)
-        os.makedirs(save_dir, exist_ok=True)
-        model.save_pretrained(save_dir, safe_serialization=True)
+        save_quantized(model, save_dir)
         processor.save_pretrained(save_dir)
         logger.info("Quantized model saved to: %s", save_dir)
+        actual_gb = os.path.getsize(os.path.join(save_dir, "ternary_packed.bin")) / (1024**3)
+        logger.info("Actual packed size: %.2f GB (vs %.0f GB raw)", actual_gb,
+                    sum(p.numel() for p in model.parameters()) * 2 / (1024**3))
     else:
         logger.info("Step 3/4: Skipped (use --save to persist).")
 
