@@ -1,12 +1,17 @@
 import logging
 import torch
-from transformers import AutoModel, AutoProcessor, BitsAndBytesConfig
+from transformers import AutoProcessor, BitsAndBytesConfig
 
 from . import hardware_utils
 
 logger = logging.getLogger(__name__)
 
 MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
+
+try:
+    from transformers import Qwen3VLForConditionalGeneration as _VLModelClass
+except ImportError:
+    from transformers import AutoModel as _VLModelClass
 
 
 def load_model(device_override: str | None = None, dtype_override: str | None = None):
@@ -49,7 +54,7 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
         torch_dtype = dtype
 
     try:
-        model = AutoModel.from_pretrained(
+        model = _VLModelClass.from_pretrained(
             MODEL_ID,
             torch_dtype=torch_dtype,
             quantization_config=quantization_config,
@@ -64,7 +69,6 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
         )
         raise
 
-    # Move to device if not using device_map
     if device.type != "cuda":
         model = model.to(device)
 
