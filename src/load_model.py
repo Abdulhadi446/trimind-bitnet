@@ -1,6 +1,6 @@
 import logging
 import torch
-from transformers import AutoModelForCausalLM, AutoProcessor, BitsAndBytesConfig
+from transformers import AutoModel, AutoProcessor, BitsAndBytesConfig
 
 from . import hardware_utils
 
@@ -49,7 +49,7 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
         torch_dtype = dtype
 
     try:
-        model = AutoModelForCausalLM.from_pretrained(
+        model = AutoModel.from_pretrained(
             MODEL_ID,
             torch_dtype=torch_dtype,
             quantization_config=quantization_config,
