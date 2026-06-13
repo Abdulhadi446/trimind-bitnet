@@ -88,12 +88,13 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
         )
         raise
 
-    if device.type == "cuda":
+    # device_map="auto" already dispatches layers — skip explicit .to()
+    if device.type == "cuda" and model.device.type != "cuda":
         model = model.to(device)
     elif device.type != "cpu":
-        logger.warning("Unsupported device %s — keeping model on CPU.", device)
+        logger.warning("Unsupported device %s — keeping model on device.", device)
 
-    actual_device = model.device if hasattr(model, "device") else device
+    actual_device = model.device if hasattr(model, "device") and model.device.type else device
 
     hardware_utils.log_memory("after_load", device)
 
