@@ -5,7 +5,8 @@ import torch.nn as nn
 logger = logging.getLogger(__name__)
 
 
-def ternary_weights(weight: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
+def ternary_weights(weight: torch.Tensor) -> torch.Tensor:
+    scale = weight.abs().mean()
     threshold = 0.7 * scale
     return torch.where(
         weight > threshold,
@@ -14,37 +15,19 @@ def ternary_weights(weight: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
     )
 
 
-class TernaryLinear(nn.Module):
-    """Wrapper that applies ternary quantization to a parent nn.Linear layer.
+def quantize_inplace(model: nn.Module, exclude_names: set[str] | None = None) -> int:
+    """Quantize all Linear layer weights to ternary {-1,0,+1} in-place.
 
-    Stores full-precision weights internally for optional fine-tuning,
-    but uses ternary-quantized weights during forward.
-    """
-
-    def __init__(self, parent: nn.Linear):
-        super().__init__()
-        self.in_features = parent.in_features
-        self.out_features = parent.out_features
-        self.weight = nn.Parameter(parent.weight.data.clone().detach())
-        if parent.bias is not None:
-            self.bias = nn.Parameter(parent.bias.data.clone().detach())
-        else:
-            self.bias = None
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        w_ternary = ternary_weights(self.weight.data, scale=self.weight.abs().mean())
-        return nn.functional.linear(x, w_ternary.to(x.dtype), self.bias)
-
-
-def replace_linear_with_ternary(model: nn.Module, exclude_names: set | None = None):
-    """Recursively replace nn.Linear layers in a model with TernaryLinear.
+    Modifies weight.data directly — no extra memory is allocated beyond the
+    model itself. Original full-precision weights are lost (the model becomes
+    the quantized version).
 
     Args:
-        model: Any PyTorch module (transformers model, etc.).
-        exclude_names: Set of module names to skip (e.g. {'lm_head', 'embed_tokens'}).
+        model: Any PyTorch module.
+        exclude_names: Module names to skip (e.g. {'lm_head'}).
 
     Returns:
-        Model with Linear layers replaced in-place.
+        Number of layers quantized.
     """
     if exclude_names is None:
         exclude_names = set()
@@ -54,24 +37,13 @@ def replace_linear_with_ternary(model: nn.Module, exclude_names: set | None = No
         if name in exclude_names:
             continue
         if isinstance(child, nn.Linear):
-            setattr(model, name, TernaryLinear(child))
+            child.weight.data = ternary_weights(child.weight.data)
             count += 1
         else:
-            count += replace_linear_with_ternary(child, exclude_names)
+            count += quantize_inplace(child, exclude_names)
     return count
 
 
-def revert_ternary_to_linear(model: nn.Module):
-    """Reverse ternary quantization — restore original nn.Linear from TernaryLinear.
-
-    Useful for saving in a standard format.
-    """
-    for name, child in model.named_children():
-        if isinstance(child, TernaryLinear):
-            new_linear = nn.Linear(child.in_features, child.out_features, bias=child.bias is not None)
-            new_linear.weight.data = child.weight.data.clone().detach()
-            if child.bias is not None:
-                new_linear.bias.data = child.bias.data.clone().detach()
-            setattr(model, name, new_linear)
-        else:
-            revert_ternary_to_linear(child)
+def replace_linear_with_ternary(model: nn.Module, exclude_names: set[str] | None = None) -> int:
+    """Alias for quantize_inplace. Kept for backward compatibility."""
+    return quantize_inplace(model, exclude_names)

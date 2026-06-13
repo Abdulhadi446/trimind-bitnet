@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 from src.load_model import load_model
-from src.quantize import replace_linear_with_ternary, revert_ternary_to_linear
+from src.quantize import quantize_inplace
 from src.test_inference import (
     run_text_inference,
     run_multi_turn_inference,
@@ -81,10 +81,10 @@ def main():
 
     # Step 2: Quantize
     logger.info("Step 2/4: Applying ternary quantization to Linear layers...")
-    n_replaced = replace_linear_with_ternary(
+    n_replaced = quantize_inplace(
         model, exclude_names={"lm_head"}
     )
-    logger.info("Replaced %d Linear layers with TernaryLinear.", n_replaced)
+    logger.info("Quantized %d Linear layers in-place.", n_replaced)
     log_memory("after_quantize", device)
 
     # Step 3: Test
@@ -102,7 +102,6 @@ def main():
         logger.info("Step 4/4: Saving quantized model...")
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         save_path = os.path.join(OUTPUT_DIR, MODEL_SAVE_NAME)
-        revert_ternary_to_linear(model)
         model.save_pretrained(save_path, safe_serialization=True)
         processor.save_pretrained(save_path)
         logger.info("Quantized model saved to: %s", save_path)
