@@ -30,6 +30,11 @@ Thumbs.db
 wandb/
 runs/
 
+# Large training data files (>100MB each)
+data/
+md/
+openaiformat/
+
 # Env
 .env
 .venv/
