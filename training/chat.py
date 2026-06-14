@@ -2,6 +2,23 @@
 import os, sys, torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+
+def patch_peft_for_bitnet():
+    import torch.nn as nn
+    from peft.tuners.lora.model import LoraModel
+    from peft.tuners.lora import Linear as LoraLinear
+
+    _orig_create = LoraModel._create_new_module
+
+    def _patched_create(self, lora_config, adapter_name, target, **kwargs):
+        if not isinstance(target, nn.Linear) and hasattr(target, 'in_features'):
+            return LoraLinear(target, adapter_name, config=lora_config, **kwargs)
+        return _orig_create(self, lora_config, adapter_name, target, **kwargs)
+
+    LoraModel._create_new_module = _patched_create
+    import warnings
+    warnings.filterwarnings("ignore", message="Unsupported layer type")
+
 MODEL_ID = "codys12/Qwen3-8B-BitNet"
 MODEL_DIR = os.path.abspath("../model")
 adapter_dirs = sorted([os.path.join(MODEL_DIR, d) for d in os.listdir(MODEL_DIR) if os.path.isdir(os.path.join(MODEL_DIR, d))])
@@ -36,6 +53,7 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 
 print(f"Loading LoRA adapters from {adapter_path} ...")
+patch_peft_for_bitnet()
 from peft import PeftModel
 model = PeftModel.from_pretrained(model, adapter_path)
 model.eval()
