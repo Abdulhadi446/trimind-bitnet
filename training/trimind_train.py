@@ -59,6 +59,8 @@ def patch_peft_for_bitnet():
         return _orig_create(self, lora_config, adapter_name, target, **kwargs)
 
     LoraModel._create_new_module = _patched_create
+    import warnings
+    warnings.filterwarnings("ignore", message="Unsupported layer type")
     print("PEFT patched for BitLinear support.")
 
 
@@ -148,7 +150,7 @@ def main():
 
     print(f"Loading model (this downloads ~3 GB on first run) ...")
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True
+        MODEL_ID, dtype=torch.bfloat16, device_map="auto", trust_remote_code=True
     )
     model.config.use_cache = False
     model.gradient_checkpointing_enable()
@@ -182,7 +184,7 @@ def main():
         per_device_eval_batch_size=2,
         gradient_accumulation_steps=8,
         learning_rate=2e-4,
-        warmup_ratio=0.03,
+        warmup_steps=50,
         num_train_epochs=1,
         logging_steps=10,
         save_steps=200,
@@ -203,7 +205,7 @@ def main():
 
     trainer = Trainer(
         model=model, args=args, train_dataset=train_ds,
-        eval_dataset=val_ds, data_collator=collator, tokenizer=tokenizer,
+        eval_dataset=val_ds, data_collator=collator,
     )
 
     print(f"\nStarting training on {fname} ...\n")
