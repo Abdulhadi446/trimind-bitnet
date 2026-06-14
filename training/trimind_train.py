@@ -126,7 +126,7 @@ def main():
     ensure_deps()
 
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, Trainer, DataCollatorForLanguageModeling
+    from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, Trainer
     from peft import LoraConfig, get_peft_model, TaskType
     from torch.utils.data import Dataset
 
@@ -137,11 +137,21 @@ def main():
             self.texts = texts
             self.tok = tok
             self.max_len = max_len
+            self._cached = [None] * len(texts)
         def __len__(self):
             return len(self.texts)
         def __getitem__(self, idx):
-            enc = self.tok(self.texts[idx], truncation=True, max_length=self.max_len, padding=False)
-            return {"input_ids": enc["input_ids"], "attention_mask": enc.get("attention_mask", [1]*len(enc["input_ids"])), "labels": enc["input_ids"].copy()}
+            if self._cached[idx] is not None:
+                return self._cached[idx]
+            enc = self.tok(self.texts[idx], truncation=True, max_length=self.max_len,
+                           padding="max_length", return_tensors="pt")
+            item = {
+                "input_ids": enc["input_ids"].squeeze(0),
+                "attention_mask": enc["attention_mask"].squeeze(0),
+                "labels": enc["input_ids"].squeeze(0),
+            }
+            self._cached[idx] = item
+            return item
 
     fname = pick_file()
     stem = fname.replace(".jsonl", "")
@@ -178,7 +188,7 @@ def main():
 
     train_ds = TextDataset(train_texts, tokenizer, 4096)
     val_ds = TextDataset(val_texts, tokenizer, 4096)
-    collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    collator = None  # default collator stacks pre-padded tensors
 
     out_dir = f"trimind-v1-{stem}"
     args = TrainingArguments(
