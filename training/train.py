@@ -1,15 +1,13 @@
 import json
 import os
-import math
-import time
 import gc
+import sys
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
 
 import torch
-import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -17,23 +15,20 @@ from transformers import (
     TrainingArguments,
     Trainer,
     DataCollatorForLanguageModeling,
-    BitsAndBytesConfig,
-    get_scheduler,
 )
 from peft import (
     LoraConfig,
     get_peft_model,
     TaskType,
-    prepare_model_for_kbit_training,
 )
-from accelerate import Accelerator
-from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub import hf_hub_download, HfApi, create_repo, snapshot_download
 import wandb
 
 
 MODEL_ID = "codys12/Qwen3-8B-BitNet"
 DATASET_REPO = "thetrillioniar/Mythos-5-and-Fabel-5-Class-Model-Outputs"
-OPENAI_FORMAT_FILES = [
+
+AVAILABLE_FILES = [
     "armand0e_fable_5.jsonl",
     "norquinal_evol_210k.jsonl",
     "norquinal_evol_250k.jsonl",
@@ -50,6 +45,11 @@ OPENAI_FORMAT_FILES = [
 class TrainingConfig:
     output_dir: str = field(default="./trimind-v1-output")
     data_dir: str = field(default="./data")
+    train_file: str = field(
+        default="",
+        metadata={"help": "Single JSONL file to train on (e.g. within_us_ai_mythos_5k.jsonl). "
+                          "Leave empty to train on all files."}
+    )
     max_length: int = field(default=4096)
     batch_size: int = field(default=2)
     gradient_accumulation_steps: int = field(default=8)
@@ -59,7 +59,7 @@ class TrainingConfig:
     lora_r: int = field(default=16)
     lora_alpha: int = field(default=32)
     lora_dropout: float = field(default=0.05)
-    warmup_steps: int = field(default=100)
+    warmup_ratio: float = field(default=0.03)
     logging_steps: int = field(default=10)
     save_steps: int = field(default=200)
     eval_steps: int = field(default=200)
@@ -68,6 +68,11 @@ class TrainingConfig:
     resume_from_checkpoint: Optional[str] = field(default=None)
     use_wandb: bool = field(default=True)
     wandb_project: str = field(default="trimind-bitnet")
+    hub_model_id: Optional[str] = field(
+        default="Abdulhadi446/Trimind-v1",
+        metadata={"help": "HF repo to push checkpoints to between sessions"}
+    )
+    push_to_hub: bool = field(default=False)
     seed: int = field(default=42)
 
 
@@ -103,55 +108,53 @@ class TextDataset(Dataset):
         }
 
 
-def download_data(data_dir: str):
+def download_and_format_single_file(
+    data_dir: str, fname: str, tokenizer, max_length: int, val_ratio: float
+):
     raw_dir = Path(data_dir) / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
-    for fname in OPENAI_FORMAT_FILES:
-        hf_hub_download(
-            repo_id=DATASET_REPO,
-            filename=f"openaiformat/{fname}",
-            local_dir=raw_dir,
-            repo_type="dataset",
-        )
-    return raw_dir
 
+    hf_hub_download(
+        repo_id=DATASET_REPO,
+        filename=f"openaiformat/{fname}",
+        local_dir=raw_dir,
+        repo_type="dataset",
+    )
 
-def format_data(raw_dir: Path, tokenizer, max_length: int, val_ratio: float):
     import random
     random.seed(42)
 
     formatted = []
     skipped = 0
-    for fname in OPENAI_FORMAT_FILES:
-        path = raw_dir / fname
-        if not path.exists():
-            continue
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    skipped += 1
-                    continue
-                messages = record.get("messages", [])
-                if not messages:
-                    skipped += 1
-                    continue
-                text = tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=False,
-                )
-                tokens = tokenizer(text, truncation=True, max_length=max_length)
-                if len(tokens["input_ids"]) < 10:
-                    skipped += 1
-                    continue
-                formatted.append(text)
+    path = raw_dir / fname
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                skipped += 1
+                continue
+            messages = record.get("messages", [])
+            if not messages:
+                skipped += 1
+                continue
+            text = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=False,
+            )
+            tokens = tokenizer(text, truncation=True, max_length=max_length)
+            if len(tokens["input_ids"]) < 10:
+                skipped += 1
+                continue
+            formatted.append(text)
 
-    print(f"Formatted {len(formatted)} examples, skipped {skipped}")
+    name_stem = fname.replace(".jsonl", "")
+    print(f"[{name_stem}] Formatted {len(formatted)} examples, skipped {skipped}")
+
     indices = list(range(len(formatted)))
     random.shuffle(indices)
     n_val = max(1, int(len(indices) * val_ratio))
@@ -161,14 +164,15 @@ def format_data(raw_dir: Path, tokenizer, max_length: int, val_ratio: float):
 
     proc_dir = Path(data_dir) / "processed"
     proc_dir.mkdir(parents=True, exist_ok=True)
-    with open(proc_dir / "train.jsonl", "w") as f:
+    with open(proc_dir / f"train_{name_stem}.jsonl", "w") as f:
         for t in train_texts:
             f.write(json.dumps({"text": t}) + "\n")
-    with open(proc_dir / "val.jsonl", "w") as f:
+    with open(proc_dir / f"val_{name_stem}.jsonl", "w") as f:
         for t in val_texts:
             f.write(json.dumps({"text": t}) + "\n")
-    print(f"Saved {len(train_texts)} train + {len(val_texts)} val to {proc_dir}/")
-    return proc_dir
+
+    print(f"[{name_stem}] Saved {len(train_texts)} train + {len(val_texts)} val")
+    return name_stem, len(train_texts), len(val_texts)
 
 
 def find_target_modules(model) -> list[str]:
@@ -179,8 +183,10 @@ def find_target_modules(model) -> list[str]:
             if name.endswith(suffix):
                 name_set.add(suffix)
     print(f"Found target modules: {sorted(name_set)}")
-    return sorted(name_set) if name_set else ["q_proj", "k_proj", "v_proj", "o_proj",
-                                                "gate_proj", "up_proj", "down_proj"]
+    return sorted(name_set) if name_set else [
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj"
+    ]
 
 
 def setup_model_and_tokenizer(config: TrainingConfig):
@@ -215,121 +221,232 @@ def setup_model_and_tokenizer(config: TrainingConfig):
     return model, tokenizer
 
 
+def push_intermediate(api: HfApi, repo_id: str, local_dir: str, commit_msg: str):
+    print(f"Pushing to {repo_id}: {commit_msg}")
+    try:
+        api.upload_folder(
+            folder_path=local_dir,
+            repo_id=repo_id,
+            repo_type="model",
+            commit_message=commit_msg,
+            ignore_patterns=["*.safetensors", "pytorch_model*"],
+        )
+    except Exception as e:
+        print(f"Push warning (non-fatal): {e}")
+
+
 def main():
     parser = HfArgumentParser(TrainingConfig)
-    config = parser.parse_args_into_dataclasses()[0]
+    config, remaining = parser.parse_args_into_dataclasses(return_remaining_strings=True)
 
     if config.test_run:
         print("=" * 60)
-        print("TEST RUN MODE: 50 steps, no wandb, small subset")
+        print("TEST RUN MODE: 50 steps, no wandb")
         print("=" * 60)
         config.max_steps = 50
         config.use_wandb = False
-        config.save_steps = 1000
+        config.push_to_hub = False
 
-    print(f"\n=== Trimind v1 Fine-Tuning ===")
+    print(f"\n=== Trimind v1 — Single-File Fine-Tune ===")
     print(f"Model: {MODEL_ID}")
     print(f"Output: {config.output_dir}")
-    print(f"Max length: {config.max_length}")
-    print(f"Batch size: {config.batch_size}")
-    print(f"Grad accum: {config.gradient_accumulation_steps}")
+    print(f"Max length: {config.max_length}, Batch: {config.batch_size}, "
+          f"Grad accum: {config.gradient_accumulation_steps}")
     print(f"Effective batch size: {config.batch_size * config.gradient_accumulation_steps}")
-    print(f"Learning rate: {config.learning_rate}")
     print(f"LoRA r={config.lora_r}, alpha={config.lora_alpha}")
-    print(f"Test run: {config.test_run}")
+    print(f"Push to hub: {config.push_to_hub} → {config.hub_model_id}")
+    if config.resume_from_checkpoint:
+        print(f"Resuming from: {config.resume_from_checkpoint}")
     print()
 
     model, tokenizer = setup_model_and_tokenizer(config)
 
-    print("\nPreparing dataset...")
-    raw_dir = download_data(config.data_dir)
-    proc_dir = format_data(raw_dir, tokenizer, config.max_length, config.val_ratio)
-
-    train_dataset = TextDataset(
-        proc_dir / "train.jsonl", tokenizer, config.max_length
-    )
-    eval_dataset = TextDataset(
-        proc_dir / "val.jsonl", tokenizer, config.max_length
-    )
-
-    data_collator = DataCollatorForLanguageModeling(
-        tokenizer=tokenizer,
-        mlm=False,
-    )
-
-    if config.use_wandb and not config.test_run:
-        wandb.init(
-            project=config.wandb_project,
-            name=f"trimind-v1-lora-r{config.lora_r}",
-            config={
-                "model": MODEL_ID,
-                "dataset": DATASET_REPO,
-                "lora_r": config.lora_r,
-                "lora_alpha": config.lora_alpha,
-                "lora_dropout": config.lora_dropout,
-                "learning_rate": config.learning_rate,
-                "batch_size": config.batch_size,
-                "gradient_accumulation_steps": config.gradient_accumulation_steps,
-                "max_length": config.max_length,
-            },
-        )
+    # Determine which file(s) to train on
+    if config.train_file:
+        fnames = [config.train_file]
     else:
-        os.environ["WANDB_DISABLED"] = "true"
+        fnames = AVAILABLE_FILES
 
-    training_args = TrainingArguments(
-        output_dir=config.output_dir,
-        overwrite_output_dir=True,
-        num_train_epochs=config.num_epochs if config.max_steps <= 0 else 1e9,
-        max_steps=config.max_steps,
-        per_device_train_batch_size=config.batch_size,
-        per_device_eval_batch_size=config.batch_size,
-        gradient_accumulation_steps=config.gradient_accumulation_steps,
-        learning_rate=config.learning_rate,
-        warmup_steps=config.warmup_steps,
-        logging_steps=config.logging_steps,
-        save_steps=config.save_steps,
-        eval_steps=config.eval_steps,
-        evaluation_strategy="steps",
-        save_strategy="steps",
-        save_total_limit=3,
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
-        fp16=torch.cuda.is_available(),
-        bf16=False,
-        gradient_checkpointing=True,
-        gradient_checkpointing_kwargs={"use_reentrant": False},
-        ddp_find_unused_parameters=False,
-        seed=config.seed,
-        report_to="wandb" if (config.use_wandb and not config.test_run) else "none",
-        remove_unused_columns=True,
-        dataloader_num_workers=2,
-    )
+    # Track completed files in a JSON state file
+    state_path = Path(config.output_dir) / ".trimind_state.json"
+    if state_path.exists():
+        with open(state_path) as f:
+            state = json.load(f)
+    else:
+        state = {"completed_files": [], "current_file": None}
 
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        data_collator=data_collator,
-        tokenizer=tokenizer,
-    )
+    # Download / process all requested files upfront
+    file_info = []
+    for fname in fnames:
+        name_stem = fname.replace(".jsonl", "")
+        proc_train = Path(config.data_dir) / "processed" / f"train_{name_stem}.jsonl"
+        if proc_train.exists():
+            with open(proc_train) as f:
+                n_train = sum(1 for _ in f)
+            with open(Path(config.data_dir) / "processed" / f"val_{name_stem}.jsonl") as f:
+                n_val = sum(1 for _ in f)
+            print(f"[{name_stem}] Using cached: {n_train} train, {n_val} val")
+        else:
+            name_stem, n_train, n_val = download_and_format_single_file(
+                config.data_dir, fname, tokenizer, config.max_length, config.val_ratio
+            )
+        file_info.append((fname, name_stem, n_train, n_val))
 
-    print("\nStarting training...")
-    train_result = trainer.train(resume_from_checkpoint=config.resume_from_checkpoint)
+    # LoRA adapters are loaded once; we train file-by-file, saving after each
+    api = HfApi() if config.push_to_hub else None
+    if config.push_to_hub and config.hub_model_id:
+        create_repo(config.hub_model_id, exist_ok=True, private=True)
 
-    print(f"\nSaving final model to {config.output_dir}...")
-    trainer.save_model(config.output_dir)
-    tokenizer.save_pretrained(config.output_dir)
+    total_steps_completed = 0
 
-    metrics = train_result.metrics
-    print(f"\n=== Training Complete ===")
-    print(f"Train loss: {metrics.get('train_loss', 'N/A')}")
-    print(f"Runtime: {metrics.get('train_runtime', 'N/A')}s")
-    print(f"Samples/sec: {metrics.get('train_samples_per_second', 'N/A')}")
+    for fname, name_stem, n_train, n_val in file_info:
+        if name_stem in state.get("completed_files", []):
+            print(f"\n=== Skipping {name_stem} (already completed) ===")
+            continue
 
-    if config.use_wandb and not config.test_run:
-        wandb.finish()
+        print(f"\n{'='*60}")
+        print(f"Training on: {name_stem}")
+        print(f"  {n_train} train / {n_val} val examples")
+        print(f"{'='*60}")
+
+        train_dataset = TextDataset(
+            Path(config.data_dir) / "processed" / f"train_{name_stem}.jsonl",
+            tokenizer, config.max_length
+        )
+        eval_dataset = TextDataset(
+            Path(config.data_dir) / "processed" / f"val_{name_stem}.jsonl",
+            tokenizer, config.max_length
+        )
+
+        # Per-file output dir (all under main output_dir with subdirs)
+        file_output_dir = Path(config.output_dir) / name_stem
+        file_output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Check for existing checkpoints in this file's subdir
+        resume_ckpt = config.resume_from_checkpoint
+        if resume_ckpt is None and file_output_dir.exists():
+            # auto-detect latest checkpoint
+            ckpts = sorted(file_output_dir.glob("checkpoint-*"))
+            if ckpts:
+                resume_ckpt = str(ckpts[-1])
+                print(f"Auto-resuming from: {resume_ckpt}")
+
+        data_collator = DataCollatorForLanguageModeling(
+            tokenizer=tokenizer, mlm=False,
+        )
+
+        if config.use_wandb and not config.test_run:
+            run_name = f"trimind-v1-{name_stem}-r{config.lora_r}"
+            wandb.init(
+                project=config.wandb_project,
+                name=run_name,
+                config={
+                    "model": MODEL_ID,
+                    "dataset_file": fname,
+                    "lora_r": config.lora_r,
+                    "lora_alpha": config.lora_alpha,
+                    "learning_rate": config.learning_rate,
+                    "batch_size": config.batch_size,
+                    "gradient_accumulation_steps": config.gradient_accumulation_steps,
+                    "max_length": config.max_length,
+                    "n_train": n_train,
+                    "n_val": n_val,
+                },
+                reinit=True,
+            )
+        else:
+            os.environ["WANDB_DISABLED"] = "true"
+
+        # Number of steps for this file
+        steps_per_epoch = max(1, n_train // (config.batch_size * config.gradient_accumulation_steps))
+        if config.test_run:
+            max_steps = min(50, steps_per_epoch)
+        elif config.max_steps > 0:
+            max_steps = config.max_steps
+        else:
+            max_steps = steps_per_epoch * config.num_epochs
+
+        training_args = TrainingArguments(
+            output_dir=str(file_output_dir),
+            overwrite_output_dir=True,
+            max_steps=max_steps,
+            per_device_train_batch_size=config.batch_size,
+            per_device_eval_batch_size=config.batch_size,
+            gradient_accumulation_steps=config.gradient_accumulation_steps,
+            learning_rate=config.learning_rate,
+            warmup_ratio=config.warmup_ratio,
+            logging_steps=config.logging_steps,
+            save_steps=config.save_steps,
+            eval_steps=config.eval_steps,
+            evaluation_strategy="steps",
+            save_strategy="steps",
+            save_total_limit=3,
+            load_best_model_at_end=True,
+            metric_for_best_model="eval_loss",
+            greater_is_better=False,
+            fp16=torch.cuda.is_available(),
+            bf16=False,
+            gradient_checkpointing=True,
+            gradient_checkpointing_kwargs={"use_reentrant": False},
+            ddp_find_unused_parameters=False,
+            seed=config.seed,
+            report_to="wandb" if (config.use_wandb and not config.test_run) else "none",
+            remove_unused_columns=True,
+            dataloader_num_workers=2,
+        )
+
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            data_collator=data_collator,
+            tokenizer=tokenizer,
+        )
+
+        print(f"\nStarting training on {name_stem} ({max_steps} steps)...")
+        train_result = trainer.train(resume_from_checkpoint=resume_ckpt)
+
+        # Save adapters for this file
+        adapter_path = Path(config.output_dir) / "adapters" / name_stem
+        model.save_pretrained(str(adapter_path))
+        print(f"Saved LoRA adapters to {adapter_path}")
+
+        # Push intermediate adapters to Hub (small files only)
+        if config.push_to_hub and api and not config.test_run:
+            push_intermediate(
+                api, config.hub_model_id, str(adapter_path),
+                f"feat: adapters after {name_stem} (step {total_steps_completed + max_steps})"
+            )
+
+        # Update state
+        state["completed_files"].append(name_stem)
+        state["current_file"] = name_stem
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(state_path, "w") as f:
+            json.dump(state, f, indent=2)
+
+        total_steps_completed += max_steps
+
+        metrics = train_result.metrics
+        print(f"\n--- Results for {name_stem} ---")
+        print(f"  Train loss: {metrics.get('train_loss', 'N/A')}")
+        print(f"  Eval loss:  {metrics.get('eval_loss', 'N/A')}")
+        print(f"  Runtime:    {metrics.get('train_runtime', 'N/A'):.1f}s")
+        print(f"  Steps:      {metrics.get('global_step', max_steps)}")
+
+        if config.use_wandb and not config.test_run:
+            wandb.finish()
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    print(f"\n{'='*60}")
+    print(f"All requested files completed!")
+    print(f"Completed: {state['completed_files']}")
+    print(f"LoRA adapters saved in: {Path(config.output_dir) / 'adapters'}")
+    print(f"{'='*60}")
 
 
 if __name__ == "__main__":
