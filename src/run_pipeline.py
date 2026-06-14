@@ -95,17 +95,13 @@ def main():
 
     # Step 3: Save (before inference — save even if inference crashes)
     if args.save:
-        logger.info("Step 3/4: Saving quantized model in packed 2-bit format...")
+        logger.info("Step 3/4: Saving quantized model as safetensors...")
         save_dir = os.path.join(args.output_dir, MODEL_SAVE_NAME)
         save_quantized(model, save_dir)
-        model.config.save_pretrained(save_dir)
-        if hasattr(model, "generation_config"):
-            model.generation_config.save_pretrained(save_dir)
         processor.save_pretrained(save_dir)
         logger.info("Quantized model saved to: %s", save_dir)
-        actual_gb = os.path.getsize(os.path.join(save_dir, "ternary_packed.bin")) / (1024**3)
-        logger.info("Actual packed size: %.2f GB (vs %.0f GB raw)", actual_gb,
-                    sum(p.numel() for p in model.parameters()) * 2 / (1024**3))
+        raw_gb = sum(p.numel() for p in model.parameters()) * 2 / (1024**3)
+        logger.info("Saved size: ~%.1f GB (standard safetensors, directly loadable)", raw_gb)
     else:
         logger.info("Step 3/4: Skipped (use --save to persist).")
 
