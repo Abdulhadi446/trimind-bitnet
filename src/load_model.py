@@ -1,23 +1,14 @@
 import logging
 import os
 import torch
-from transformers import AutoProcessor, BitsAndBytesConfig
+from transformers import AutoProcessor, AutoModelForCausalLM, BitsAndBytesConfig
 from huggingface_hub import try_to_load_from_cache
 
 from . import hardware_utils
 
 logger = logging.getLogger(__name__)
 
-MODEL_ID = "google/gemma-4-12B-it"
-
-try:
-    from transformers import Gemma4UnifiedForConditionalGeneration as _VLModelClass
-except ImportError:
-    try:
-        from transformers import Gemma4ForCausalLM as _VLModelClass
-    except ImportError:
-        from transformers import AutoModel as _VLModelClass
-
+MODEL_ID = "Qwen/Qwen3-Coder-8B"
 
 def _cache_complete() -> bool:
     for filename in ("model.safetensors.index.json", "pytorch_model.bin.index.json", "model.safetensors", "model-00001-of-00004.safetensors"):
@@ -35,9 +26,9 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
     if cache_ok:
         logger.info("Model weights found in HF cache.")
     else:
-        logger.info("No cached weights — will download from Hugging Face Hub (~24 GB)")
+        logger.info("No cached weights — will download from Hugging Face Hub (~16 GB)")
 
-    device, dtype = hardware_utils.detect_device(model_size_gb=24)
+    device, dtype = hardware_utils.detect_device(model_size_gb=16)
     if device_override:
         device = torch.device(device_override)
     if dtype_override:
@@ -79,7 +70,7 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
                 max_memory["cpu"] = f"{int(ram_gb)}GiB"
             logger.info("Device map auto with max_memory: %s", max_memory)
 
-        model = _VLModelClass.from_pretrained(
+        model = AutoModelForCausalLM.from_pretrained(
             MODEL_ID,
             torch_dtype=torch_dtype,
             quantization_config=quantization_config,

@@ -90,11 +90,15 @@ def log_memory(step_label: str, device: torch.device):
     if device.type == "cuda":
         allocated = torch.cuda.memory_allocated(device) / (1024**3)
         reserved = torch.cuda.memory_reserved(device) / (1024**3)
+        mem = psutil.virtual_memory()
         logger.info(
-            "[MEM %s] GPU allocated: %.2f GB | reserved: %.2f GB",
+            "[MEM %s] GPU allocated: %.2f GB | reserved: %.2f GB | RAM used: %.1f/%.1f GB (%.0f%%)",
             step_label,
             allocated,
             reserved,
+            mem.used / (1024**3),
+            mem.total / (1024**3),
+            mem.percent,
         )
     elif device.type == "cpu":
         mem = psutil.virtual_memory()
