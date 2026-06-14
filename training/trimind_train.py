@@ -55,8 +55,6 @@ def patch_peft_for_bitnet():
 
     def _patched_create(self, lora_config, adapter_name, target, **kwargs):
         if not isinstance(target, nn.Linear) and hasattr(target, 'in_features'):
-            target_type = type(target).__name__
-            print(f"  Wrapping {target_type} as LoRA Linear ...")
             return LoraLinear(target, adapter_name, config=lora_config, **kwargs)
         return _orig_create(self, lora_config, adapter_name, target, **kwargs)
 
@@ -189,7 +187,7 @@ def main():
         logging_steps=10,
         save_steps=200,
         eval_steps=200,
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         save_strategy="steps",
         save_total_limit=2,
         load_best_model_at_end=True,
