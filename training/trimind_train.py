@@ -35,6 +35,15 @@ def ensure_deps():
             ["bitsandbytes", "datasets", "safetensors"]
         )
         print("Done.\n")
+    # fix torchao version conflict if present
+    try:
+        import torchao
+        from packaging import version
+        if version.parse(torchao.__version__) < version.parse("0.16.0"):
+            print(f"Upgrading torchao {torchao.__version__} -> >=0.16.0 ...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "-U", "torchao>=0.16.0"])
+    except ImportError:
+        pass
 
 
 def pick_file():
