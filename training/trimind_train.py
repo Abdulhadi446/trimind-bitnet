@@ -82,7 +82,7 @@ def pick_file():
         print(f"Enter a number 1-{len(FILES)}.")
 
 
-def download_and_format(fname, tokenizer, max_length=4096, val_split=0.05):
+def download_and_format(fname, tokenizer, max_length=1024, val_split=0.05):
     from huggingface_hub import hf_hub_download
 
     raw_dir = "data/raw"
@@ -163,7 +163,7 @@ def main():
 
     print(f"Loading model (this downloads ~3 GB on first run) ...")
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID, dtype=torch.bfloat16, device_map="auto", trust_remote_code=True
+        MODEL_ID, dtype=torch.float16, device_map="auto", trust_remote_code=True
     )
     model.config.use_cache = False
     model.gradient_checkpointing_enable()
@@ -186,7 +186,7 @@ def main():
     print(f"\nDownloading & formatting {fname} ...")
     train_texts, val_texts = download_and_format(fname, tokenizer)
 
-    train_ds = TextDataset(train_texts, tokenizer, 4096)
+    train_ds = TextDataset(train_texts, tokenizer, 1024)
 
     out_dir = f"trimind-v1-{stem}"
     args = TrainingArguments(
