@@ -35,7 +35,6 @@ def ensure_deps():
             ["bitsandbytes", "datasets", "safetensors"]
         )
         print("Done.\n")
-    # fix torchao version conflict if present
     try:
         import torchao
         from packaging import version
@@ -44,6 +43,25 @@ def ensure_deps():
             subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "-U", "torchao>=0.16.0"])
     except ImportError:
         pass
+
+
+def patch_peft_for_bitnet():
+    """Monkey-patch PEFT so LoRA works with BitLinear layers."""
+    import torch.nn as nn
+    from peft.tuners.lora.model import LoraModel
+    from peft.tuners.lora import Linear as LoraLinear
+
+    _orig_create = LoraModel._create_new_module
+
+    def _patched_create(self, lora_config, adapter_name, target, **kwargs):
+        if not isinstance(target, nn.Linear) and hasattr(target, 'in_features'):
+            target_type = type(target).__name__
+            print(f"  Wrapping {target_type} as LoRA Linear ...")
+            return LoraLinear(target, adapter_name, config=lora_config, **kwargs)
+        return _orig_create(self, lora_config, adapter_name, target, **kwargs)
+
+    LoraModel._create_new_module = _patched_create
+    print("PEFT patched for BitLinear support.")
 
 
 def pick_file():
@@ -109,6 +127,8 @@ def main():
     from peft import LoraConfig, get_peft_model, TaskType
     from torch.utils.data import Dataset
 
+    patch_peft_for_bitnet()
+
     class TextDataset(Dataset):
         def __init__(self, texts, tok, max_len):
             self.texts = texts
@@ -128,8 +148,10 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print(f"Loading model (this downloads ~16 GB on first run) ...")
-    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
+    print(f"Loading model (this downloads ~3 GB on first run) ...")
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_ID, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True
+    )
     model.config.use_cache = False
     model.gradient_checkpointing_enable()
 
@@ -141,7 +163,10 @@ def main():
     target_modules = sorted(set(target_modules))
 
     print(f"Applying LoRA (r=16, alpha=32) to {target_modules} ...")
-    peft_config = LoraConfig(task_type=TaskType.CAUSAL_LM, r=16, lora_alpha=32, lora_dropout=0.05, target_modules=target_modules, bias="none")
+    peft_config = LoraConfig(
+        task_type=TaskType.CAUSAL_LM, r=16, lora_alpha=32,
+        lora_dropout=0.05, target_modules=target_modules, bias="none",
+    )
     model = get_peft_model(model, peft_config)
     model.print_trainable_parameters()
 
@@ -150,7 +175,6 @@ def main():
 
     train_ds = TextDataset(train_texts, tokenizer, 4096)
     val_ds = TextDataset(val_texts, tokenizer, 4096)
-
     collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     out_dir = f"trimind-v1-{stem}"
@@ -179,7 +203,10 @@ def main():
         dataloader_num_workers=2,
     )
 
-    trainer = Trainer(model=model, args=args, train_dataset=train_ds, eval_dataset=val_ds, data_collator=collator, tokenizer=tokenizer)
+    trainer = Trainer(
+        model=model, args=args, train_dataset=train_ds,
+        eval_dataset=val_ds, data_collator=collator, tokenizer=tokenizer,
+    )
 
     print(f"\nStarting training on {fname} ...\n")
     result = trainer.train()
@@ -195,7 +222,11 @@ def main():
         from huggingface_hub import HfApi, create_repo
         repo = "Abdulhadi446/Trimind-v1"
         create_repo(repo, exist_ok=True, private=True)
-        HfApi().upload_folder(folder_path=adapter_dir, repo_id=repo, repo_type="model", path_in_repo=f"adapters/{stem}", commit_message=f"feat: LoRA adapters for {stem}")
+        HfApi().upload_folder(
+            folder_path=adapter_dir, repo_id=repo, repo_type="model",
+            path_in_repo=f"adapters/{stem}",
+            commit_message=f"feat: LoRA adapters for {stem}",
+        )
         print(f"Uploaded to https://huggingface.co/{repo}/tree/main/adapters/{stem}")
 
 
