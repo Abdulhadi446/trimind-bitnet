@@ -6,7 +6,7 @@ MODEL = "thetrillioniar/Qwen3-8B-1Q"
 PROMPTS = ["hi", "What is 2+2?", "Write a haiku about AI."]
 
 os.makedirs("/tmp/qwen", exist_ok=True)
-os.system(f"huggingface-cli download {MODEL} --local-dir /tmp/qwen --quiet")
+os.system(f"hf download {MODEL} --local-dir /tmp/qwen --quiet 2>/dev/null || huggingface-cli download {MODEL} --local-dir /tmp/qwen --quiet")
 
 config = AutoConfig.from_pretrained("/tmp/qwen", trust_remote_code=True)
 model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
