@@ -25,8 +25,11 @@ MODEL_ID = "codys12/Qwen3-8B-BitNet"
 MODEL_DIR = os.path.abspath("../model")
 adapter_dirs = sorted([
     os.path.join(MODEL_DIR, d) for d in os.listdir(MODEL_DIR)
-    if os.path.isdir(os.path.join(MODEL_DIR, d))
+    if os.path.isdir(os.path.join(MODEL_DIR, d)) and d != "trimind-v1-all"  # combined model last
 ])
+combined = os.path.join(MODEL_DIR, "trimind-v1-all")
+if os.path.isdir(combined):
+    adapter_dirs.append(combined)  # put last
 
 if not adapter_dirs:
     print(f"No adapter directories found in {MODEL_DIR}/")
