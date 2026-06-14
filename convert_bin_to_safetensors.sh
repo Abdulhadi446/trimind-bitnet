@@ -33,5 +33,6 @@ print('Converted: model.safetensors + config.json + ternary_packed_info.json')
 "
 
 echo "Uploading to https://huggingface.co/$REPO ..."
-huggingface-cli upload "$REPO" "$MODEL_DIR" . --delete
+hf upload "$REPO" "$MODEL_DIR" .
 echo "Done."
+
