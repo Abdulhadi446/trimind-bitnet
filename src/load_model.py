@@ -75,11 +75,26 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
         torch_dtype = dtype
 
     try:
+        # If CUDA VRAM can't fit the full model, load on CPU (avoids meta tensors)
+        use_device_map = False
+        if device.type == "cuda":
+            total_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            if dtype == torch.bfloat16 and total_vram < 24 * 1.2:
+                logger.warning(
+                    "VRAM (%.1f GB) insufficient for full model at BF16. "
+                    "Loading on CPU instead (avoids offloaded meta tensors).",
+                    total_vram,
+                )
+                device = torch.device("cpu")
+                torch_dtype = torch.bfloat16
+            else:
+                use_device_map = True
+
         model = _VLModelClass.from_pretrained(
             MODEL_ID,
             torch_dtype=torch_dtype,
             quantization_config=quantization_config,
-            device_map="auto" if device.type == "cuda" else None,
+            device_map="auto" if use_device_map else None,
             trust_remote_code=True,
             local_files_only=cache_ok,
         )
@@ -91,11 +106,13 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
         )
         raise
 
-    # device_map="auto" already dispatches layers — skip explicit .to()
-    if device.type == "cuda" and model.device.type != "cuda":
+    # Move to device if not already there and not dispatched by accelerate
+    if use_device_map:
+        logger.info("Model dispatched by accelerate (device_map=auto).")
+    elif device.type == "cuda":
         model = model.to(device)
-    elif device.type != "cpu":
-        logger.warning("Unsupported device %s — keeping model on device.", device)
+    else:
+        logger.info("Model loaded on %s.", device)
 
     actual_device = model.device if hasattr(model, "device") and model.device.type else device
 

@@ -47,6 +47,8 @@ def pack_ternary(w: torch.Tensor) -> tuple[bytes, float]:
     Each ternary value {-1,0,1} is mapped to 2 bits (0,1,2).
     4 values per byte. Returns (packed_bytes, scale).
     """
+    if w.device.type == "meta":
+        raise RuntimeError(f"Cannot pack meta tensor — materialize weights first")
     w_flat = w.view(-1).cpu()
     scale = w_flat.abs().mean().item()
     if scale == 0:
@@ -80,6 +82,7 @@ def unpack_ternary(packed: bytes, shape: tuple, scale: float, dtype=torch.bfloat
 
 def save_quantized(model: nn.Module, save_dir: str):
     """Save quantized model in packed 2-bit format (~3 GB for a 12B model)."""
+    model = model.cpu()
     os.makedirs(save_dir, exist_ok=True)
     metadata = {}
     all_packed = {}
