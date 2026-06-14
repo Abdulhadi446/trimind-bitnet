@@ -8,7 +8,10 @@ from . import hardware_utils
 
 logger = logging.getLogger(__name__)
 
-MODEL_ID = "Qwen/Qwen3-Coder-8B"
+MODEL_ID = "Qwen/Qwen3-8B"
+
+def _hf_token() -> str | None:
+    return os.environ.get("HF_TOKEN") or None
 
 def _cache_complete() -> bool:
     for filename in ("model.safetensors.index.json", "pytorch_model.bin.index.json", "model.safetensors", "model-00001-of-00004.safetensors"):
@@ -76,6 +79,7 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
             quantization_config=quantization_config,
             device_map="auto" if use_device_map else None,
             max_memory=max_memory,
+            token=_hf_token(),
             trust_remote_code=True,
             local_files_only=cache_ok,
         )
@@ -93,7 +97,7 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
 
     hardware_utils.log_memory("after_load", device)
 
-    processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(MODEL_ID, token=_hf_token(), trust_remote_code=True)
 
     logger.info("Model loaded on %s with dtype %s.", device, dtype)
     return model, processor, actual_device

@@ -76,7 +76,7 @@ def main():
 
     logger.info("=" * 50)
     logger.info("triMind-BitNet Pipeline")
-    logger.info("Model: Qwen/Qwen3-Coder-8B → 1.58-bit Ternary")
+    logger.info("Model: Qwen/Qwen3-8B → 1.58-bit Ternary")
     logger.info("=" * 50)
 
     # Step 1: Load
