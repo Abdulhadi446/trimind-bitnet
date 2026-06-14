@@ -34,7 +34,7 @@ logging.basicConfig(
 logger = logging.getLogger("pipeline")
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "output")
-MODEL_SAVE_NAME = "qwen3coder-8b-ternary"
+MODEL_SAVE_NAME = "Qwen3-8B-1Q"
 
 
 def parse_args():
@@ -95,13 +95,13 @@ def main():
 
     # Step 3: Save (before inference — save even if inference crashes)
     if args.save:
-        logger.info("Step 3/4: Saving quantized model as safetensors...")
+        logger.info("Step 3/4: Saving quantized model as packed 2-bit safetensors...")
         save_dir = os.path.join(args.output_dir, MODEL_SAVE_NAME)
         save_quantized(model, save_dir)
         processor.save_pretrained(save_dir)
         logger.info("Quantized model saved to: %s", save_dir)
-        raw_gb = sum(p.numel() for p in model.parameters()) * 2 / (1024**3)
-        logger.info("Saved size: ~%.1f GB (standard safetensors, directly loadable)", raw_gb)
+        safetensors_size = os.path.getsize(os.path.join(save_dir, "model.safetensors")) / (1024**3)
+        logger.info("model.safetensors: %.2f GB (packed 2-bit)", safetensors_size)
     else:
         logger.info("Step 3/4: Skipped (use --save to persist).")
 
