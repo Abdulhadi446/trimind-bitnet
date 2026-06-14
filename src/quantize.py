@@ -14,11 +14,6 @@ def ternary_scale(weight: torch.Tensor) -> torch.Tensor:
 
 
 def quantize_inplace(model: nn.Module, exclude_names: set[str] | None = None) -> int:
-    """Quantize all Linear layer weights to ternary {-1,0,+1} in-place.
-
-    Weights become ternary values scaled by absmean. Storage dtype remains
-    bf16/float32 — use pack_quantized() during save for true compression.
-    """
     if exclude_names is None:
         exclude_names = set()
 
@@ -28,6 +23,9 @@ def quantize_inplace(model: nn.Module, exclude_names: set[str] | None = None) ->
             continue
         if isinstance(child, nn.Linear):
             w = child.weight.data
+            if w.device.type == "meta":
+                logger.warning("Skipping meta tensor: %s — materialize weights first.", name)
+                continue
             scale = ternary_scale(w)
             threshold = 0.7 * scale
             child.weight.data = torch.where(
@@ -42,20 +40,13 @@ def quantize_inplace(model: nn.Module, exclude_names: set[str] | None = None) ->
 
 
 def pack_ternary(w: torch.Tensor) -> tuple[bytes, float]:
-    """Pack a ternary weight tensor into 2-bit-per-value bytes.
-
-    Each ternary value {-1,0,1} is mapped to 2 bits (0,1,2).
-    4 values per byte. Returns (packed_bytes, scale).
-    """
     if w.device.type == "meta":
-        raise RuntimeError(f"Cannot pack meta tensor — materialize weights first")
+        raise RuntimeError("Cannot pack meta tensor — materialize weights first")
     w_flat = w.view(-1).cpu()
     scale = w_flat.abs().mean().item()
     if scale == 0:
         scale = 1.0
-    # Extract sign: -1 -> 0, 0 -> 1, +1 -> 2
     idx = (w_flat / scale).to(torch.int8).add_(1).clamp_(0, 2)
-    # Pad to multiple of 4
     n = idx.numel()
     pad = (4 - n % 4) % 4
     if pad:
@@ -66,7 +57,6 @@ def pack_ternary(w: torch.Tensor) -> tuple[bytes, float]:
 
 
 def unpack_ternary(packed: bytes, shape: tuple, scale: float, dtype=torch.bfloat16, device="cpu") -> torch.Tensor:
-    """Unpack 2-bit ternary bytes back into a full weight tensor."""
     packed_t = torch.frombuffer(packed, dtype=torch.uint8, device=device)
     idx = torch.stack([
         (packed_t >> 6) & 3,
@@ -81,20 +71,25 @@ def unpack_ternary(packed: bytes, shape: tuple, scale: float, dtype=torch.bfloat
 
 
 def save_quantized(model: nn.Module, save_dir: str):
-    """Save quantized model in packed 2-bit format (~3 GB for a 12B model)."""
-    model = model.cpu()
+    """Save quantized model in packed 2-bit format (~3 GB for a 12B model).
+    Weights can be on any device — each is moved to CPU individually for packing."""
     os.makedirs(save_dir, exist_ok=True)
     metadata = {}
     all_packed = {}
+    meta_skipped = 0
     for name, module in model.named_modules():
         if isinstance(module, nn.Linear):
             key = name + ".weight"
-            data, scale = pack_ternary(module.weight.data)
+            w = module.weight.data
+            if w.device.type == "meta":
+                meta_skipped += 1
+                continue
+            data, scale = pack_ternary(w)
             all_packed[key] = data
             metadata[key] = {
-                "shape": list(module.weight.shape),
+                "shape": list(w.shape),
                 "scale": scale,
-                "dtype": str(module.weight.dtype).split(".")[-1],
+                "dtype": str(w.dtype).split(".")[-1],
             }
     with open(os.path.join(save_dir, "ternary_metadata.json"), "w") as f:
         json.dump(metadata, f)
@@ -109,14 +104,14 @@ def save_quantized(model: nn.Module, save_dir: str):
         pos += (n + 3) // 4
     with open(os.path.join(save_dir, "ternary_offsets.json"), "w") as f:
         json.dump(offsets, f)
-    logger.info("Saved packed ternary: %d layers, %.1f MB -> %.1f MB unpacked",
+    logger.info("Saved packed ternary: %d layers, %.1f MB packed -> %.1f MB unpacked%s",
                 len(metadata),
                 pos / (1024 * 1024),
-                sum(p[0]*p[1] for p in [v["shape"] for v in metadata.values()]) * 2 / (1024 * 1024))
+                sum(p[0]*p[1] for p in [v["shape"] for v in metadata.values()]) * 2 / (1024 * 1024),
+                f" (skipped {meta_skipped} meta layers)" if meta_skipped else "")
 
 
 def load_quantized_weights(model: nn.Module, save_dir: str, device="cpu"):
-    """Load packed ternary weights back into a model."""
     with open(os.path.join(save_dir, "ternary_metadata.json")) as f:
         metadata = json.load(f)
     with open(os.path.join(save_dir, "ternary_offsets.json")) as f:
