@@ -49,7 +49,7 @@ if tokenizer.pad_token is None:
 
 print(f"Loading base model (this downloads ~3 GB on first run) ...")
 model = AutoModelForCausalLM.from_pretrained(
-    MODEL_ID, dtype=torch.float16, device_map="auto", trust_remote_code=True,
+    MODEL_ID, dtype=torch.bfloat16, device_map="auto", trust_remote_code=True,
 )
 
 print(f"Loading LoRA adapters from {adapter_path} ...")
@@ -75,6 +75,7 @@ while True:
             temperature=0.7,
             top_p=0.9,
             do_sample=True,
+            repetition_penalty=1.05,
             pad_token_id=tokenizer.eos_token_id,
         )
 
