@@ -1,18 +1,18 @@
 """Chat with fine-tuned Qwen3-8B-BitNet + LoRA adapters."""
-import json, os, sys, torch
+import os, sys, torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_ID = "codys12/Qwen3-8B-BitNet"
+MODEL_DIR = os.path.abspath("../model")
+adapter_dirs = sorted([os.path.join(MODEL_DIR, d) for d in os.listdir(MODEL_DIR) if os.path.isdir(os.path.join(MODEL_DIR, d))])
 
-# Auto-detect latest adapter dir
-adapter_dirs = sorted([d for d in os.listdir(".") if d.startswith("adapters-")])
 if not adapter_dirs:
-    print("No adapter directories found (adapters-*).")
+    print(f"No adapter directories found in {MODEL_DIR}/")
     sys.exit(1)
 
 print("Available adapters:")
 for i, d in enumerate(adapter_dirs, 1):
-    print(f"  {i}. {d}")
+    print(f"  {i}. {os.path.basename(d)}")
 
 while True:
     try:

@@ -217,23 +217,12 @@ def main():
     print(f"\nStarting training on {fname} ...\n")
     result = trainer.train()
 
-    adapter_dir = f"adapters-{stem}"
+    adapter_dir = os.path.abspath(f"../model/{stem}")
     model.save_pretrained(adapter_dir)
     tokenizer.save_pretrained(adapter_dir)
 
     print(f"\nDone! LoRA adapters saved to: {adapter_dir}/")
     print(f"Final train loss: {result.metrics.get('train_loss', 'N/A')}")
-
-    if input("\nPush to Hub? (y/n): ").strip().lower() == "y":
-        from huggingface_hub import HfApi, create_repo
-        repo = "Abdulhadi446/Trimind-v1"
-        create_repo(repo, exist_ok=True, private=True)
-        HfApi().upload_folder(
-            folder_path=adapter_dir, repo_id=repo, repo_type="model",
-            path_in_repo=f"adapters/{stem}",
-            commit_message=f"feat: LoRA adapters for {stem}",
-        )
-        print(f"Uploaded to https://huggingface.co/{repo}/tree/main/adapters/{stem}")
 
 
 if __name__ == "__main__":
