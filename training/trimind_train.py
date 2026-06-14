@@ -187,38 +187,31 @@ def main():
     train_texts, val_texts = download_and_format(fname, tokenizer)
 
     train_ds = TextDataset(train_texts, tokenizer, 4096)
-    val_ds = TextDataset(val_texts, tokenizer, 4096)
-    collator = None  # default collator stacks pre-padded tensors
 
     out_dir = f"trimind-v1-{stem}"
     args = TrainingArguments(
         output_dir=out_dir,
-        per_device_train_batch_size=2,
-        per_device_eval_batch_size=2,
+        per_device_train_batch_size=1,
+        per_device_eval_batch_size=1,
         gradient_accumulation_steps=8,
         learning_rate=2e-4,
         warmup_steps=50,
         num_train_epochs=1,
         logging_steps=10,
-        save_steps=200,
-        eval_steps=200,
-        eval_strategy="steps",
+        save_steps=500,
+        eval_strategy="no",
         save_strategy="steps",
         save_total_limit=2,
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
-        fp16=torch.cuda.is_available(),
+        fp16=True,
         gradient_checkpointing=True,
-        gradient_checkpointing_kwargs={"use_reentrant": False},
+        gradient_checkpointing_kwargs={"use_reentrant": True},
         ddp_find_unused_parameters=False,
         report_to="none",
-        dataloader_num_workers=2,
+        dataloader_num_workers=0,
     )
 
     trainer = Trainer(
         model=model, args=args, train_dataset=train_ds,
-        eval_dataset=val_ds, data_collator=collator,
     )
 
     print(f"\nStarting training on {fname} ...\n")
