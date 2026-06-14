@@ -1,5 +1,7 @@
 """
 Trimind v1 — Fine-tune Qwen3-8B-BitNet on one dataset file at a time.
+Accumulates LoRA adapters into ../model/trimind-v1-all/ across sessions.
+
 Usage:  python trimind_train.py
 """
 
@@ -7,6 +9,8 @@ import json, os, sys, gc, subprocess, importlib
 
 MODEL_ID = "codys12/Qwen3-8B-BitNet"
 DATASET_REPO = "thetrillioniar/Mythos-5-and-Fabel-5-Class-Model-Outputs"
+ADAPTER_DIR = os.path.abspath("../model/trimind-v1-all")
+MAX_LEN = 1024
 
 FILES = [
     "within_us_ai_mythos_5k.jsonl",
@@ -34,7 +38,6 @@ def ensure_deps():
             [sys.executable, "-m", "pip", "install", "-q"] + missing +
             ["bitsandbytes", "datasets", "safetensors"]
         )
-        print("Done.\n")
     try:
         import torchao
         from packaging import version
@@ -46,7 +49,6 @@ def ensure_deps():
 
 
 def patch_peft_for_bitnet():
-    """Monkey-patch PEFT so LoRA works with BitLinear layers."""
     import torch.nn as nn
     from peft.tuners.lora.model import LoraModel
     from peft.tuners.lora import Linear as LoraLinear
@@ -61,7 +63,6 @@ def patch_peft_for_bitnet():
     LoraModel._create_new_module = _patched_create
     import warnings
     warnings.filterwarnings("ignore", message="Unsupported layer type")
-    # Patch Trainer's BitNet training guard BEFORE Trainer is imported.
     import transformers.trainer as _tr
     _tr.validate_quantization_for_training = lambda model: None
     print("PEFT patched for BitLinear support.")
@@ -79,23 +80,19 @@ def pick_file():
                 return FILES[idx]
         except ValueError:
             pass
-        print(f"Enter a number 1-{len(FILES)}.")
 
 
-def download_and_format(fname, tokenizer, max_length=1024, val_split=0.05):
+def download_and_format(fname, tokenizer):
     from huggingface_hub import hf_hub_download
+    import random
+    random.seed(42)
 
     raw_dir = "data/raw"
     os.makedirs(raw_dir, exist_ok=True)
     path = hf_hub_download(
-        repo_id=DATASET_REPO,
-        filename=f"openaiformat/{fname}",
-        local_dir=raw_dir,
-        repo_type="dataset",
+        repo_id=DATASET_REPO, filename=f"openaiformat/{fname}",
+        local_dir=raw_dir, repo_type="dataset",
     )
-
-    import random
-    random.seed(42)
 
     texts = []
     with open(path) as f:
@@ -111,15 +108,14 @@ def download_and_format(fname, tokenizer, max_length=1024, val_split=0.05):
             if not msgs:
                 continue
             text = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
-            tokens = tokenizer(text, truncation=True, max_length=max_length)
+            tokens = tokenizer(text, truncation=True, max_length=MAX_LEN)
             if len(tokens["input_ids"]) < 10:
                 continue
             texts.append(text)
 
     random.shuffle(texts)
-    n_val = max(1, int(len(texts) * val_split))
-    print(f"  Loaded {len(texts)} examples ({n_val} for validation)")
-    return texts[n_val:], texts[:n_val]
+    print(f"  Loaded {len(texts)} examples")
+    return texts
 
 
 def main():
@@ -127,7 +123,7 @@ def main():
 
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, Trainer
-    from peft import LoraConfig, get_peft_model, TaskType
+    from peft import LoraConfig, get_peft_model, PeftModel, TaskType
     from torch.utils.data import Dataset
 
     patch_peft_for_bitnet()
@@ -138,8 +134,10 @@ def main():
             self.tok = tok
             self.max_len = max_len
             self._cached = [None] * len(texts)
+
         def __len__(self):
             return len(self.texts)
+
         def __getitem__(self, idx):
             if self._cached[idx] is not None:
                 return self._cached[idx]
@@ -154,7 +152,6 @@ def main():
             return item
 
     fname = pick_file()
-    stem = fname.replace(".jsonl", "")
 
     print(f"\nLoading tokenizer ...")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
@@ -163,34 +160,36 @@ def main():
 
     print(f"Loading model (this downloads ~3 GB on first run) ...")
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID, dtype=torch.float16, device_map="auto", trust_remote_code=True
+        MODEL_ID, dtype=torch.float16, device_map="auto", trust_remote_code=True,
     )
     model.config.use_cache = False
     model.gradient_checkpointing_enable()
 
-    target_modules = []
-    for n, _ in model.named_modules():
-        for s in ["q_proj","k_proj","v_proj","o_proj","gate_proj","up_proj","down_proj"]:
-            if n.endswith(s):
-                target_modules.append(s)
-    target_modules = sorted(set(target_modules))
+    target_modules = sorted(set(
+        s for n, _ in model.named_modules()
+        for s in ["q_proj","k_proj","v_proj","o_proj","gate_proj","up_proj","down_proj"]
+        if n.endswith(s)
+    ))
 
-    print(f"Applying LoRA (r=16, alpha=32) to {target_modules} ...")
     peft_config = LoraConfig(
         task_type=TaskType.CAUSAL_LM, r=16, lora_alpha=32,
         lora_dropout=0.05, target_modules=target_modules, bias="none",
     )
-    model = get_peft_model(model, peft_config)
+
+    if os.path.isdir(ADAPTER_DIR) and os.path.exists(os.path.join(ADAPTER_DIR, "adapter_config.json")):
+        print(f"Resuming from existing adapters in {ADAPTER_DIR} ...")
+        model = PeftModel.from_pretrained(model, ADAPTER_DIR, is_trainable=True)
+    else:
+        print(f"Creating fresh LoRA (r=16, alpha=32) on {target_modules} ...")
+        model = get_peft_model(model, peft_config)
     model.print_trainable_parameters()
 
     print(f"\nDownloading & formatting {fname} ...")
-    train_texts, val_texts = download_and_format(fname, tokenizer)
+    texts = download_and_format(fname, tokenizer)
+    train_ds = TextDataset(texts, tokenizer, MAX_LEN)
 
-    train_ds = TextDataset(train_texts, tokenizer, 1024)
-
-    out_dir = f"trimind-v1-{stem}"
     args = TrainingArguments(
-        output_dir=out_dir,
+        output_dir="trimind-v1-checkpoints",
         per_device_train_batch_size=1,
         per_device_eval_batch_size=1,
         gradient_accumulation_steps=8,
@@ -217,12 +216,12 @@ def main():
     print(f"\nStarting training on {fname} ...\n")
     result = trainer.train()
 
-    adapter_dir = os.path.abspath(f"../model/{stem}")
-    model.save_pretrained(adapter_dir)
-    tokenizer.save_pretrained(adapter_dir)
+    os.makedirs(ADAPTER_DIR, exist_ok=True)
+    model.save_pretrained(ADAPTER_DIR)
+    tokenizer.save_pretrained(ADAPTER_DIR)
 
-    print(f"\nDone! LoRA adapters saved to: {adapter_dir}/")
-    print(f"Final train loss: {result.metrics.get('train_loss', 'N/A')}")
+    print(f"\nDone! Adapters accumulated in {ADAPTER_DIR}/")
+    print(f"Train loss: {result.metrics.get('train_loss', 'N/A')}")
 
 
 if __name__ == "__main__":
