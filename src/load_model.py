@@ -81,7 +81,6 @@ def load_model(device_override: str | None = None, dtype_override: str | None = 
             max_memory=max_memory,
             token=_hf_token(),
             trust_remote_code=True,
-            local_files_only=cache_ok,
         )
     except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
         logger.error("Failed to load model: %s", e)
