@@ -1,5 +1,7 @@
 """Chat with fine-tuned Qwen3-8B-BitNet + LoRA adapters."""
-import os, sys, torch
+import os, sys, torch, warnings
+warnings.filterwarnings("ignore", message=".*does not support bfloat16.*")
+
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
@@ -16,12 +18,15 @@ def patch_peft_for_bitnet():
         return _orig_create(self, lora_config, adapter_name, target, **kwargs)
 
     LoraModel._create_new_module = _patched_create
-    import warnings
     warnings.filterwarnings("ignore", message="Unsupported layer type")
+
 
 MODEL_ID = "codys12/Qwen3-8B-BitNet"
 MODEL_DIR = os.path.abspath("../model")
-adapter_dirs = sorted([os.path.join(MODEL_DIR, d) for d in os.listdir(MODEL_DIR) if os.path.isdir(os.path.join(MODEL_DIR, d))])
+adapter_dirs = sorted([
+    os.path.join(MODEL_DIR, d) for d in os.listdir(MODEL_DIR)
+    if os.path.isdir(os.path.join(MODEL_DIR, d))
+])
 
 if not adapter_dirs:
     print(f"No adapter directories found in {MODEL_DIR}/")
@@ -68,16 +73,19 @@ while True:
     text = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
     inputs = tokenizer(text, return_tensors="pt").to(model.device)
 
-    with torch.no_grad():
-        out = model.generate(
-            **inputs,
-            max_new_tokens=512,
-            temperature=0.7,
-            top_p=0.9,
-            do_sample=True,
-            repetition_penalty=1.05,
-            pad_token_id=tokenizer.eos_token_id,
-        )
-
-    reply = tokenizer.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
-    print(f"Bot: {reply}\n")
+    print("Generating...", end=" ", flush=True)
+    try:
+        with torch.no_grad():
+            out = model.generate(
+                **inputs,
+                max_new_tokens=128,
+                temperature=0.7,
+                top_p=0.9,
+                do_sample=True,
+                repetition_penalty=1.05,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+        reply = tokenizer.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
+        print(f"Bot: {reply}\n")
+    except RuntimeError as e:
+        print(f"Error: {e}")
