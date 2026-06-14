@@ -61,9 +61,9 @@ def patch_peft_for_bitnet():
     LoraModel._create_new_module = _patched_create
     import warnings
     warnings.filterwarnings("ignore", message="Unsupported layer type")
-    # Disable the Trainer guard that blocks fine-tuning of BitNet models.
-    import transformers.trainer_utils
-    transformers.trainer_utils.validate_quantization_for_training = lambda model: None
+    # Patch Trainer's BitNet training guard BEFORE Trainer is imported.
+    import transformers.trainer as _tr
+    _tr.validate_quantization_for_training = lambda model: None
     print("PEFT patched for BitLinear support.")
 
 
