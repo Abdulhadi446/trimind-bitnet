@@ -29,11 +29,12 @@ with safe_open("/tmp/qwen/model.safetensors", framework="pt") as sf:
         elif not key.endswith(".ternary_scale"):
             state[key] = t.to(torch.bfloat16)
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
 model.load_state_dict(state, strict=False)
-model.eval()
+model.to(device).eval()
 tok = AutoTokenizer.from_pretrained("/tmp/qwen", trust_remote_code=True)
 
 for p in PROMPTS:
-    out = model.generate(**tok(p, return_tensors="pt"), max_new_tokens=50, do_sample=True, temperature=0.7)
+    out = model.generate(**tok(p, return_tensors="pt").to(device), max_new_tokens=50, do_sample=True, temperature=0.7)
     print(f"\n=== {p} ===")
     print(tok.decode(out[0]))
