@@ -90,6 +90,9 @@ for module in model.modules():
     for name, param in module.named_parameters(recurse=False):
         if param.device.type == "meta":
             module._parameters[name] = torch.nn.Parameter(torch.zeros(param.shape, dtype=param.dtype))
+    for name, buf in module.named_buffers(recurse=False):
+        if buf.device.type == "meta":
+            module._buffers[name] = torch.zeros(buf.shape, dtype=buf.dtype)
 gc.collect()
 model.eval()
 
