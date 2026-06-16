@@ -16,7 +16,7 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 model_kwargs = dict(
     config=AutoConfig.from_pretrained(MODEL_NAME, trust_remote_code=True),
     torch_dtype=torch.bfloat16,
-    device_map="auto",
+    low_cpu_mem_usage=True,
     trust_remote_code=True,
 )
 if MODEL_CACHE:
@@ -25,6 +25,7 @@ else:
     model_kwargs["pretrained_model_name_or_path"] = MODEL_NAME
 
 model = AutoModelForCausalLM.from_pretrained(**model_kwargs)
+model = model.cpu()
 
 ternary_layers = {}
 state_dict = {}
