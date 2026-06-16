@@ -1,70 +1,44 @@
-import json, os, torch
-from safetensors.torch import save_file as sf_save
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-from tqdm import tqdm
+import os, sys, subprocess
 
 MODEL_NAME = "google/gemma-4-12B-it"
-MODEL_CACHE = None
-SAVE_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", MODEL_NAME))
+HF_BF16_REPO = MODEL_NAME
+SAVE_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "models", "gemma-4-12B-it-bitnet"))
+BITNET_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "BitNet"))
 
-if os.path.exists(os.path.join(SAVE_DIR, "model.safetensors")):
-    print(f"Converted model already exists at {SAVE_DIR}, skipping conversion.")
-    exit(0)
+GGUF_FILE = os.path.join(SAVE_DIR, "ggml-model-i2_s.gguf")
+if os.path.exists(GGUF_FILE):
+    print(f"Quantized model exists at {GGUF_FILE}, skipping.")
+    sys.exit(0)
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-config = AutoConfig.from_pretrained(MODEL_NAME, trust_remote_code=True)
-model_kwargs = dict(
-    config=config,
-    torch_dtype=torch.bfloat16,
-    low_cpu_mem_usage=True,
-    trust_remote_code=True,
-)
-if MODEL_CACHE:
-    model_kwargs["pretrained_model_name_or_path"] = MODEL_CACHE
-else:
-    model_kwargs["pretrained_model_name_or_path"] = MODEL_NAME
+def run(cmd, **kw):
+    print(f"$ {cmd}")
+    subprocess.run(cmd, shell=True, check=True, **kw)
 
-model = AutoModelForCausalLM.from_pretrained(**model_kwargs)
-model = model.cpu()
+# ── 1. Clone BitNet framework ──────────────────────────────────────────────
+if not os.path.exists(BITNET_DIR):
+    run("git clone --recursive https://github.com/microsoft/BitNet.git", cwd=os.path.dirname(BITNET_DIR))
 
-ternary_layers = {}
-state_dict = {}
+# ── 2. Install deps ────────────────────────────────────────────────────────
+run(f"pip install -r {BITNET_DIR}/requirements.txt -q")
 
-@torch.no_grad()
-def ternarize(w: torch.Tensor) -> tuple[torch.Tensor, float]:
-    scale = w.abs().mean().clamp(min=1e-8)
-    w_tern = torch.where(w.abs() > scale * 0.5, w.sign(), torch.zeros_like(w))
-    return w_tern, scale.item()
+# ── 3. Download raw bf16 model ─────────────────────────────────────────────
+BF16_DIR = os.path.join(SAVE_DIR, "bf16")
+if not os.path.exists(os.path.join(BF16_DIR, "config.json")):
+    os.makedirs(BF16_DIR, exist_ok=True)
+    run(f"hf download {HF_BF16_REPO} --local-dir {BF16_DIR} --quiet")
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+# ── 4. Convert to GGUF via official BitNet script ──────────────────────────
+run(f"python {BITNET_DIR}/utils/convert-helper-bitnet.py {BF16_DIR}")
 
-for name, param in tqdm(model.named_parameters(), desc="Converting to BitNet"):
-    if param.ndim >= 2 and any(k in name for k in ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]):
-        w = param.data.float().to(device)
-        w_tern, scale = ternarize(w)
-        int_map = (w_tern.to(torch.int8) + 1).clamp(0, 2).to(torch.uint8)
-        packed_shape = list(w_tern.shape)
-        n = w_tern.numel()
-        pad = (4 - n % 4) % 4
-        if pad:
-            int_map = torch.cat([int_map.flatten(), torch.zeros(pad, dtype=torch.uint8, device=int_map.device)])
-        else:
-            int_map = int_map.flatten()
-        packed = (int_map[0::4] << 6) | (int_map[1::4] << 4) | (int_map[2::4] << 2) | int_map[3::4]
-        state_dict[f"{name}.ternary_packed"] = packed.cpu()
-        state_dict[f"{name}.ternary_scale"] = torch.tensor([scale], dtype=torch.bfloat16)
-        ternary_layers[name] = {"shape": packed_shape}
-    else:
-        state_dict[name] = param.cpu().to(torch.bfloat16)
+# ── 5. Setup env ───────────────────────────────────────────────────────────
+run(f"python {BITNET_DIR}/setup_env.py -md {BF16_DIR} -q i2_s")
 
-info = {"packed_layers": ternary_layers}
-with open(os.path.join(SAVE_DIR, "ternary_packed_info.json"), "w") as f:
-    json.dump(info, f, indent=2)
+# ── 6. Copy GGUF to SAVE_DIR ───────────────────────────────────────────────
+import glob, shutil
+for f in glob.glob(os.path.join(BF16_DIR, "ggml-*.gguf")):
+    shutil.copy(f, SAVE_DIR)
+    print(f"Copied {f} -> {SAVE_DIR}")
 
-config.save_pretrained(SAVE_DIR)
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
-tokenizer.save_pretrained(SAVE_DIR)
-
-sf_save(state_dict, os.path.join(SAVE_DIR, "model.safetensors"))
-print(f"BitNet model saved to {SAVE_DIR}")
+print(f"Done. GGUF model at {GGUF_FILE}")
