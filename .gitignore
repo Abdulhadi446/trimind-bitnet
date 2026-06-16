@@ -5,6 +5,7 @@ models/
 *.bin
 *.pt
 *.pth
+Mythos-Models-Data-Outpus/
 
 # Python
 __pycache__/

@@ -16,30 +16,47 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 
-def load_ternary_weights(model, model_dir: str, device="cpu"):
+def load_quantized(model, model_dir: str, device="cpu"):
+    """Load all weights from safetensors, unpacking ternary layers."""
     with open(os.path.join(model_dir, "ternary_packed_info.json")) as f:
-        info = json.load(f)
-    packed_info = info["packed_layers"]
+        packed_info = json.load(f).get("packed_layers", {})
 
+    state_dict = {}
     with safe_open(os.path.join(model_dir, "model.safetensors"), framework="pt") as sf:
-        for name, module in model.named_modules():
-            key = name + ".weight"
-            if key not in packed_info:
-                continue
-            packed = sf.get_tensor(key + ".ternary_packed").to(device)
-            scale_t = sf.get_tensor(key + ".ternary_scale").to(device)
-            scale = scale_t.item()
-            shape = packed_info[key]["shape"]
+        for key in sf.keys():
+            tensor = sf.get_tensor(key)
 
-            idx = torch.stack([
-                (packed >> 6) & 3, (packed >> 4) & 3, (packed >> 2) & 3, packed & 3,
-            ], dim=1).view(-1)
-            n = shape[0] * shape[1]
-            idx = idx[:n]
-            w = (idx.to(torch.int8).sub_(1)).to(torch.bfloat16) * scale
-            module.weight.data = w.view(shape).to(device)
+            # If it's a packed ternary key, unpack it
+            if key.endswith(".ternary_packed"):
+                base_key = key[: -len(".ternary_packed")]
+                meta = packed_info.get(base_key)
+                if meta is None:
+                    continue
+                scale_key = base_key + ".ternary_scale"
+                scale_t = sf.get_tensor(scale_key)
+                scale = scale_t.item()
+                shape = meta["shape"]
 
-    logger.info("Loaded ternary weights for %d layers.", len(packed_info))
+                idx = torch.stack([
+                    (tensor >> 6) & 3, (tensor >> 4) & 3,
+                    (tensor >> 2) & 3, tensor & 3,
+                ], dim=1).view(-1)
+                n = shape[0] * shape[1]
+                idx = idx[:n]
+                w = (idx.to(torch.int8).sub_(1)).to(torch.bfloat16) * scale
+                state_dict[base_key] = w.view(shape)
+            elif not key.endswith(".ternary_scale"):
+                # Non-quantized weight (embed, norm, bias, lm_head)
+                state_dict[key] = tensor.to(torch.bfloat16)
+
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    if missing:
+        logger.warning("Missing keys: %d", len(missing))
+    if unexpected:
+        logger.warning("Unexpected keys: %d", len(unexpected))
+    model.to(device)
+    logger.info("Loaded %d tensors (%d packed).", len(state_dict), len(packed_info))
+    return model
 
 
 @torch.no_grad()
@@ -63,12 +80,11 @@ def main():
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-
     logger.info("Loading from %s on %s ...", args.model_dir, device)
+
     config = AutoConfig.from_pretrained(args.model_dir, trust_remote_code=True)
     model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
-    model.to(device)
-    load_ternary_weights(model, args.model_dir, device=device)
+    load_quantized(model, args.model_dir, device=device)
     model.eval()
 
     processor = AutoProcessor.from_pretrained(args.model_dir, trust_remote_code=True)

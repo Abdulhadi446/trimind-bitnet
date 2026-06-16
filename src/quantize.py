@@ -124,48 +124,75 @@ def save_quantized(model: nn.Module, save_dir: str):
 
     state_dict = {}
     packed_info = {}
+
+    # Collect all parameters: quantize linear weights, save others as-is
+    all_params = dict(model.named_parameters())
+    linear_param_keys = set()
     for name, module in model.named_modules():
         if isinstance(module, nn.Linear):
-            w = module.weight.data
-            if w.device.type == "meta":
-                continue
-            packed_tensor, scale = _pack_ternary_tensor(w)
             key = name + ".weight"
-            packed_key = key + ".ternary_packed"
-            scale_key = key + ".ternary_scale"
-            state_dict[packed_key] = packed_tensor
-            state_dict[scale_key] = torch.tensor([scale], dtype=torch.float16)
+            if key in all_params:
+                linear_param_keys.add(key)
+
+    for key, param in all_params.items():
+        if param.device.type == "meta":
+            continue
+        if key in linear_param_keys:
+            packed_tensor, scale = _pack_ternary_tensor(param.data)
+            state_dict[key + ".ternary_packed"] = packed_tensor
+            state_dict[key + ".ternary_scale"] = torch.tensor([scale], dtype=torch.float16)
             packed_info[key] = {
-                "shape": list(w.shape),
-                "dtype": str(w.dtype).split(".")[-1],
+                "shape": list(param.shape),
+                "dtype": str(param.dtype).split(".")[-1],
             }
+        else:
+            state_dict[key] = param.data.cpu().to(torch.bfloat16)
 
     safetensors_save_file(state_dict, os.path.join(save_dir, "model.safetensors"))
     with open(os.path.join(save_dir, "ternary_packed_info.json"), "w") as f:
         json.dump({"packed_layers": packed_info, "version": 1}, f)
 
-    raw_params = sum(p[0] * p[1] for p in [v["shape"] for v in packed_info.values()])
     packed_gb = sum(v.numel() for v in state_dict.values()) / (1024**3)
-    logger.info("Saved ternary safetensors: %.2f GB packed (vs %.1f GB raw, %.1f GB BF16)",
-                packed_gb, raw_params * 1 / (1024**3), raw_params * 2 / (1024**3))
+    n_linear = len(packed_info)
+    n_total = len(state_dict)
+    logger.info("Saved ternary safetensors: %.2f GB (%d layers packed, %d total tensors)",
+                packed_gb, n_linear, n_total)
 
 
 def load_quantized(model: nn.Module, model_dir: str, device="cpu"):
     """Load packed ternary weights from safetensors into a model."""
     with open(os.path.join(model_dir, "ternary_packed_info.json")) as f:
-        info = json.load(f)
-    packed_info = info["packed_layers"]
+        packed_info = json.load(f).get("packed_layers", {})
 
+    state_dict = {}
     with safe_open(os.path.join(model_dir, "model.safetensors"), framework="pt") as sf:
-        for name, module in model.named_modules():
-            key = name + ".weight"
-            if key not in packed_info:
-                continue
-            packed_tensor = sf.get_tensor(key + ".ternary_packed").to(device)
-            scale_tensor = sf.get_tensor(key + ".ternary_scale").to(device)
-            scale = scale_tensor.item()
-            shape = packed_info[key]["shape"]
-            w = _unpack_ternary_tensor(packed_tensor, tuple(shape), scale)
-            module.weight.data = w.to(device)
+        for key in sf.keys():
+            tensor = sf.get_tensor(key)
+            if key.endswith(".ternary_packed"):
+                base_key = key[: -len(".ternary_packed")]
+                meta = packed_info.get(base_key)
+                if meta is None:
+                    continue
+                scale_key = base_key + ".ternary_scale"
+                scale_t = sf.get_tensor(scale_key)
+                scale = scale_t.item()
+                shape = meta["shape"]
+                idx = torch.stack([
+                    (tensor >> 6) & 3, (tensor >> 4) & 3,
+                    (tensor >> 2) & 3, tensor & 3,
+                ], dim=1).view(-1)
+                n = shape[0] * shape[1]
+                idx = idx[:n]
+                w = (idx.to(torch.int8).sub_(1)).to(torch.bfloat16) * scale
+                state_dict[base_key] = w.view(shape)
+            elif not key.endswith(".ternary_scale"):
+                state_dict[key] = tensor.to(torch.bfloat16)
 
-    logger.info("Loaded ternary weights for %d layers.", len(packed_info))
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    if missing:
+        logger.warning("Missing keys: %d", len(missing))
+    if unexpected:
+        logger.warning("Unexpected keys: %d", len(unexpected))
+    model.to(device)
+    logger.info("Loaded %d tensors (%d packed).", len(state_dict), len(packed_info))
+    return model
