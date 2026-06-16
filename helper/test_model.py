@@ -7,8 +7,6 @@ MODEL_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "mode
 HF_REPO = "thetrillioniar/gemma-4-12b-bitnet"
 PROMPTS = ["hi", "What is the capital of France?", "Write a haiku about AI."]
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
 # load from local dir, or download from HF
 if not os.path.exists(os.path.join(MODEL_DIR, "model.safetensors")):
     if HF_REPO:
@@ -71,11 +69,11 @@ with safe_open(sf_path, framework="pt") as sf:
                 if b is not None:
                     mod._buffers[param_name] = t.to(torch.bfloat16)
 
-model.to(device).eval()
+model.to("cpu").eval()
 
 tok = AutoTokenizer.from_pretrained(MODEL_DIR, trust_remote_code=True)
 
 for p in PROMPTS:
-    out = model.generate(**tok(p, return_tensors="pt").to(device), max_new_tokens=50, do_sample=True, temperature=0.7)
+    out = model.generate(**tok(p, return_tensors="pt"), max_new_tokens=50, do_sample=True, temperature=0.7)
     print(f"\n=== {p} ===")
     print(tok.decode(out[0], skip_special_tokens=True))
