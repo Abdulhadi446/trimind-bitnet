@@ -1,4 +1,5 @@
 import json, os, torch, gc
+from tqdm import tqdm
 from safetensors import safe_open
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
@@ -58,7 +59,8 @@ for dotted in packed_info:
 
 sf_path = os.path.join(MODEL_DIR, "model.safetensors")
 with safe_open(sf_path, framework="pt") as sf:
-    for key in sf.keys():
+    keys = list(sf.keys())
+    for key in tqdm(keys, desc="Loading weights"):
         if key.endswith(".ternary_scale"):
             continue
         if key.endswith(".ternary_packed"):
@@ -98,9 +100,12 @@ gc.collect()
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model.to(device).eval()
 
+from transformers import TextStreamer
+
 tok = AutoTokenizer.from_pretrained(MODEL_DIR, trust_remote_code=True)
+streamer = TextStreamer(tok, skip_prompt=True)
 
 for p in PROMPTS:
-    out = model.generate(**tok(p, return_tensors="pt").to(device), max_new_tokens=50, do_sample=True, temperature=0.7)
     print(f"\n=== {p} ===")
-    print(tok.decode(out[0], skip_special_tokens=True))
+    model.generate(**tok(p, return_tensors="pt").to(device), max_new_tokens=50, do_sample=True, temperature=0.7, streamer=streamer)
+    print()
