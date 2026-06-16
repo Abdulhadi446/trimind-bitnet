@@ -11,7 +11,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 if not os.path.exists(CACHE):
     os.makedirs(CACHE, exist_ok=True)
     import subprocess
-    subprocess.run(["huggingface-cli", "download", MODEL, "--local-dir", CACHE, "--quiet"], check=True)
+    subprocess.run(["hf", "download", MODEL, "--local-dir", CACHE, "--quiet"], check=True)
 
 config = AutoConfig.from_pretrained(CACHE, trust_remote_code=True)
 model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
