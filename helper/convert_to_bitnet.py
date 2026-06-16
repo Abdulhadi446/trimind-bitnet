@@ -3,7 +3,7 @@ from safetensors.torch import save_file as sf_save
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from tqdm import tqdm
 
-MODEL_NAME = "google/gemma-2-2b"
+MODEL_NAME = "google/gemma-4-12B-it"
 SAVE_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", MODEL_NAME))
 
 device = "cuda" if torch.cuda.is_available() else "cpu"

@@ -3,7 +3,7 @@ from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
 
-MODEL_NAME = "google/gemma-2-2b"
+MODEL_NAME = "google/gemma-4-12B-it"
 MODEL_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", MODEL_NAME))
 SAVE_RESULTS = os.path.join(MODEL_DIR, "benchmark_results.json")
 
