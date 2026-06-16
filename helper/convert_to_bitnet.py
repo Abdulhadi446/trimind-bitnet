@@ -52,12 +52,11 @@ for name, param in tqdm(model.named_parameters(), desc="Converting to BitNet"):
         else:
             int_map = int_map.flatten()
         packed = (int_map[0::4] << 6) | (int_map[1::4] << 4) | (int_map[2::4] << 2) | int_map[3::4]
-        key = name.replace(".", "_")
-        state_dict[f"{key}.ternary_packed"] = packed.cpu()
-        state_dict[f"{key}.ternary_scale"] = torch.tensor([scale], dtype=torch.bfloat16)
+        state_dict[f"{name}.ternary_packed"] = packed.cpu()
+        state_dict[f"{name}.ternary_scale"] = torch.tensor([scale], dtype=torch.bfloat16)
         ternary_layers[name] = {"shape": packed_shape}
     else:
-        state_dict[name.replace(".", "_")] = param.cpu().to(torch.bfloat16)
+        state_dict[name] = param.cpu().to(torch.bfloat16)
 
 info = {"packed_layers": ternary_layers}
 with open(os.path.join(SAVE_DIR, "ternary_packed_info.json"), "w") as f:

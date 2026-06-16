@@ -13,29 +13,59 @@ if not os.path.exists(CACHE):
     import subprocess
     subprocess.run(["hf", "download", MODEL, "--local-dir", CACHE, "--quiet"], check=True)
 
-config = AutoConfig.from_pretrained(CACHE, trust_remote_code=True)
-model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
-
 with open(os.path.join(CACHE, "ternary_packed_info.json")) as f:
     packed_info = json.load(f).get("packed_layers", {})
 
-state = {}
-with safe_open(os.path.join(CACHE, "model.safetensors"), framework="pt") as sf:
+class TernaryLinear(torch.nn.Module):
+    def __init__(self, in_features, out_features, bias=False):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.bias = torch.nn.Parameter(torch.empty(out_features)) if bias else None
+
+    def forward(self, x):
+        idx = torch.stack([(self.packed >> 6) & 3, (self.packed >> 4) & 3,
+                           (self.packed >> 2) & 3, self.packed & 3], dim=1).view(-1)
+        idx = idx[:self.in_features * self.out_features]
+        w = (idx.to(torch.int8).sub_(1)).to(x.dtype) * self.scale
+        return torch.nn.functional.linear(x, w.view(self.out_features, self.in_features), self.bias)
+
+def _replace_modules(module, path=""):
+    for child_name, child in list(module.named_children()):
+        full = f"{path}.{child_name}" if path else child_name
+        if isinstance(child, torch.nn.Linear) and full in packed_info:
+            tlin = TernaryLinear(child.in_features, child.out_features, child.bias is not None)
+            setattr(module, child_name, tlin)
+        else:
+            _replace_modules(child, full)
+
+config = AutoConfig.from_pretrained(CACHE, trust_remote_code=True)
+model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
+_replace_modules(model)
+
+sf_path = os.path.join(CACHE, "model.safetensors")
+with safe_open(sf_path, framework="pt") as sf:
     for key in sf.keys():
-        t = sf.get_tensor(key)
+        if key.endswith(".ternary_scale"):
+            continue
         if key.endswith(".ternary_packed"):
             base = key[: -len(".ternary_packed")]
-            meta = packed_info.get(base)
-            if not meta:
-                continue
-            scale = sf.get_tensor(base + ".ternary_scale").item()
-            idx = torch.stack([(t >> 6) & 3, (t >> 4) & 3, (t >> 2) & 3, t & 3], dim=1).view(-1)
-            idx = idx[: meta["shape"][0] * meta["shape"][1]]
-            state[base] = (idx.to(torch.int8).sub_(1)).to(torch.bfloat16) * scale
-        elif not key.endswith(".ternary_scale"):
-            state[key] = t.to(torch.bfloat16)
+            scale_key = base + ".ternary_scale"
+            mod = model.get_submodule(base)
+            mod.register_buffer("packed", sf.get_tensor(key))
+            mod.register_buffer("scale", sf.get_tensor(scale_key).to(torch.bfloat16))
+        else:
+            t = sf.get_tensor(key)
+            *mod_path, param_name = key.split(".")
+            mod = model.get_submodule(".".join(mod_path))
+            p = mod._parameters.get(param_name)
+            if p is not None:
+                p.data.copy_(t.to(torch.bfloat16))
+            else:
+                b = mod._buffers.get(param_name)
+                if b is not None:
+                    mod._buffers[param_name] = t.to(torch.bfloat16)
 
-model.load_state_dict(state, strict=False)
 model.to(device).eval()
 
 tok = AutoTokenizer.from_pretrained(CACHE, trust_remote_code=True)
