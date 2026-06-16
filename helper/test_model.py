@@ -86,9 +86,10 @@ with safe_open(sf_path, framework="pt") as sf:
             elif param_name in mod._buffers:
                 mod._buffers[param_name] = t.to(torch.bfloat16)
 
-for param in model.parameters():
-    if param.device.type == "meta":
-        param.data = torch.zeros(param.shape, dtype=torch.bfloat16)
+for module in model.modules():
+    for name, param in module.named_parameters(recurse=False):
+        if param.device.type == "meta":
+            module._parameters[name] = torch.nn.Parameter(torch.zeros(param.shape, dtype=param.dtype))
 gc.collect()
 model.eval()
 
