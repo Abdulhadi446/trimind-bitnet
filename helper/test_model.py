@@ -2,18 +2,24 @@ import json, os, torch
 from safetensors import safe_open
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-MODEL = "thetrillioniar/gemma-4-12b-bitnet"
-CACHE = os.path.join(os.path.dirname(__file__), "..", "models", MODEL.replace("/", "_"))
+MODEL_NAME = "google/gemma-4-12B-it"
+MODEL_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "models", "gemma-4-12B-it-bitnet"))
+HF_REPO = None
 PROMPTS = ["hi", "What is the capital of France?", "Write a haiku about AI."]
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-if not os.path.exists(CACHE):
-    os.makedirs(CACHE, exist_ok=True)
-    import subprocess
-    subprocess.run(["hf", "download", MODEL, "--local-dir", CACHE, "--quiet"], check=True)
+# load from local dir, or download from HF
+if not os.path.exists(os.path.join(MODEL_DIR, "model.safetensors")):
+    if HF_REPO:
+        import subprocess
+        os.makedirs(MODEL_DIR, exist_ok=True)
+        subprocess.run(["hf", "download", HF_REPO, "--local-dir", MODEL_DIR, "--quiet"], check=True)
+    else:
+        print(f"No model found at {MODEL_DIR}. Run convert_to_bitnet.py first or set HF_REPO.")
+        exit(1)
 
-with open(os.path.join(CACHE, "ternary_packed_info.json")) as f:
+with open(os.path.join(MODEL_DIR, "ternary_packed_info.json")) as f:
     packed_info = json.load(f).get("packed_layers", {})
 
 class TernaryLinear(torch.nn.Module):
@@ -39,21 +45,20 @@ def _replace_modules(module, path=""):
         else:
             _replace_modules(child, full)
 
-config = AutoConfig.from_pretrained(CACHE, trust_remote_code=True)
+config = AutoConfig.from_pretrained(MODEL_DIR, trust_remote_code=True)
 model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
 _replace_modules(model)
 
-sf_path = os.path.join(CACHE, "model.safetensors")
+sf_path = os.path.join(MODEL_DIR, "model.safetensors")
 with safe_open(sf_path, framework="pt") as sf:
     for key in sf.keys():
         if key.endswith(".ternary_scale"):
             continue
         if key.endswith(".ternary_packed"):
             base = key[: -len(".ternary_packed")]
-            scale_key = base + ".ternary_scale"
             mod = model.get_submodule(base)
             mod.register_buffer("packed", sf.get_tensor(key))
-            mod.register_buffer("scale", sf.get_tensor(scale_key).to(torch.bfloat16))
+            mod.register_buffer("scale", sf.get_tensor(base + ".ternary_scale").to(torch.bfloat16))
         else:
             t = sf.get_tensor(key)
             *mod_path, param_name = key.split(".")
@@ -68,7 +73,7 @@ with safe_open(sf_path, framework="pt") as sf:
 
 model.to(device).eval()
 
-tok = AutoTokenizer.from_pretrained(CACHE, trust_remote_code=True)
+tok = AutoTokenizer.from_pretrained(MODEL_DIR, trust_remote_code=True)
 
 for p in PROMPTS:
     out = model.generate(**tok(p, return_tensors="pt").to(device), max_new_tokens=50, do_sample=True, temperature=0.7)
