@@ -94,11 +94,13 @@ for module in model.modules():
         if buf.device.type == "meta":
             module._buffers[name] = torch.zeros(buf.shape, dtype=buf.dtype)
 gc.collect()
-model.eval()
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model.to(device).eval()
 
 tok = AutoTokenizer.from_pretrained(MODEL_DIR, trust_remote_code=True)
 
 for p in PROMPTS:
-    out = model.generate(**tok(p, return_tensors="pt"), max_new_tokens=50, do_sample=True, temperature=0.7)
+    out = model.generate(**tok(p, return_tensors="pt").to(device), max_new_tokens=50, do_sample=True, temperature=0.7)
     print(f"\n=== {p} ===")
     print(tok.decode(out[0], skip_special_tokens=True))
