@@ -13,8 +13,9 @@ if os.path.exists(os.path.join(SAVE_DIR, "model.safetensors")):
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 
+config = AutoConfig.from_pretrained(MODEL_NAME, trust_remote_code=True)
 model_kwargs = dict(
-    config=AutoConfig.from_pretrained(MODEL_NAME, trust_remote_code=True),
+    config=config,
     torch_dtype=torch.bfloat16,
     low_cpu_mem_usage=True,
     trust_remote_code=True,
