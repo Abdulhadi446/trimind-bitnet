@@ -4,17 +4,27 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from tqdm import tqdm
 
 MODEL_NAME = "google/gemma-4-12B-it"
+MODEL_CACHE = None
 SAVE_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", MODEL_NAME))
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
-config = AutoConfig.from_pretrained(MODEL_NAME, trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_NAME, config=config, torch_dtype=torch.bfloat16, trust_remote_code=True
-)
-model.to(device)
+if os.path.exists(os.path.join(SAVE_DIR, "model.safetensors")):
+    print(f"Converted model already exists at {SAVE_DIR}, skipping conversion.")
+    exit(0)
 
 os.makedirs(SAVE_DIR, exist_ok=True)
+
+model_kwargs = dict(
+    config=AutoConfig.from_pretrained(MODEL_NAME, trust_remote_code=True),
+    torch_dtype=torch.bfloat16,
+    device_map="auto",
+    trust_remote_code=True,
+)
+if MODEL_CACHE:
+    model_kwargs["pretrained_model_name_or_path"] = MODEL_CACHE
+else:
+    model_kwargs["pretrained_model_name_or_path"] = MODEL_NAME
+
+model = AutoModelForCausalLM.from_pretrained(**model_kwargs)
 
 ternary_layers = {}
 state_dict = {}
