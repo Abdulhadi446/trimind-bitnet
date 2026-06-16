@@ -9,13 +9,9 @@ PROMPTS = ["hi", "What is the capital of France?", "Write a haiku about AI."]
 
 # load from local dir, or download from HF
 if not os.path.exists(os.path.join(MODEL_DIR, "model.safetensors")):
-    if HF_REPO:
-        import subprocess
-        os.makedirs(MODEL_DIR, exist_ok=True)
-        subprocess.run(["hf", "download", HF_REPO, "--local-dir", MODEL_DIR, "--quiet"], check=True)
-    else:
-        print(f"No model found at {MODEL_DIR}. Run convert_to_bitnet.py first or set HF_REPO.")
-        exit(1)
+    import subprocess
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    subprocess.run(["hf", "download", HF_REPO, "--local-dir", MODEL_DIR, "--quiet"], check=True)
 
 with open(os.path.join(MODEL_DIR, "ternary_packed_info.json")) as f:
     packed_info = json.load(f).get("packed_layers", {})
@@ -34,6 +30,10 @@ class TernaryLinear(torch.nn.Module):
         w = (idx.to(torch.int8).sub_(1)).to(x.dtype) * self.scale
         return torch.nn.functional.linear(x, w.view(self.out_features, self.in_features), self.bias)
 
+config = AutoConfig.from_pretrained(MODEL_DIR, trust_remote_code=True)
+with torch.device("meta"):
+    model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
+
 def _replace_modules(module, path=""):
     for child_name, child in list(module.named_children()):
         full = f"{path}.{child_name}" if path else child_name
@@ -43,8 +43,6 @@ def _replace_modules(module, path=""):
         else:
             _replace_modules(child, full)
 
-config = AutoConfig.from_pretrained(MODEL_DIR, trust_remote_code=True)
-model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
 _replace_modules(model)
 
 sf_path = os.path.join(MODEL_DIR, "model.safetensors")
@@ -61,15 +59,17 @@ with safe_open(sf_path, framework="pt") as sf:
             t = sf.get_tensor(key)
             *mod_path, param_name = key.split(".")
             mod = model.get_submodule(".".join(mod_path))
-            p = mod._parameters.get(param_name)
-            if p is not None:
-                p.data.copy_(t.to(torch.bfloat16))
-            else:
-                b = mod._buffers.get(param_name)
-                if b is not None:
-                    mod._buffers[param_name] = t.to(torch.bfloat16)
+            if param_name in mod._parameters:
+                mod._parameters[param_name] = torch.nn.Parameter(t.to(torch.bfloat16))
+            elif param_name in mod._buffers:
+                mod._buffers[param_name] = t.to(torch.bfloat16)
 
-model.to("cpu").eval()
+import gc
+for param in model.parameters():
+    if param.device.type == "meta":
+        param.data = torch.zeros(param.shape, dtype=torch.bfloat16)
+gc.collect()
+model.eval()
 
 tok = AutoTokenizer.from_pretrained(MODEL_DIR, trust_remote_code=True)
 
