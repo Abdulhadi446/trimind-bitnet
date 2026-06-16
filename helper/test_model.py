@@ -4,7 +4,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 MODEL_NAME = "google/gemma-4-12B-it"
 MODEL_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "models", "gemma-4-12B-it-bitnet"))
-HF_REPO = None
+HF_REPO = "thetrillioniar/gemma-4-12b-bitnet"
 PROMPTS = ["hi", "What is the capital of France?", "Write a haiku about AI."]
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
