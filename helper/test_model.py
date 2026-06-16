@@ -66,7 +66,8 @@ with safe_open(sf_path, framework="pt") as sf:
             dotted = underscore_to_dotted.get(base)
             if not dotted:
                 continue
-            mod = model.get_submodule(dotted)
+            *mod_path, _ = dotted.split(".")
+            mod = model.get_submodule(".".join(mod_path))
             mod.register_buffer("packed", sf.get_tensor(key))
             mod.register_buffer("scale", sf.get_tensor(base + ".ternary_scale").to(torch.bfloat16))
         else:
