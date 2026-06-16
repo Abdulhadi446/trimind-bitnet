@@ -37,9 +37,12 @@ def ternarize(w: torch.Tensor) -> tuple[torch.Tensor, float]:
     w_tern = torch.where(w.abs() > scale * 0.5, w.sign(), torch.zeros_like(w))
     return w_tern, scale.item()
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
 for name, param in tqdm(model.named_parameters(), desc="Converting to BitNet"):
     if param.ndim >= 2 and any(k in name for k in ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]):
-        w_tern, scale = ternarize(param.data.float())
+        w = param.data.float().to(device)
+        w_tern, scale = ternarize(w)
         int_map = (w_tern.to(torch.int8) + 1).clamp(0, 2).to(torch.uint8)
         packed_shape = list(w_tern.shape)
         n = w_tern.numel()
